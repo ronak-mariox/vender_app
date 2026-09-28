@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, FormSectionCard, Input, NavHeader, ScreenContainer, SelectField } from '../../components';
@@ -7,11 +8,13 @@ import { Icon } from '../../icons/Icon';
 import { useStoreSetup, type TempClosureData } from '../../context/StoreSetupContext';
 import { TIME_OPTIONS } from '../../utils/time';
 import { isRequired, type FormErrors } from '../../utils/validators';
+import { formatShortDate, parseShortDate } from './storeSetupHelpers';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'TempClosure'>;
 
-type Errors = FormErrors<'reason' | 'fromDate' | 'toDate'>;
+type Errors = FormErrors<'reason' | 'customMessage' | 'fromDate' | 'toDate' | 'closeFromTime' | 'reopenAt'>;
+type DateKey = 'fromDate' | 'toDate';
 
 const REASONS = ['Festival / Holiday', 'Maintenance', 'Staff Shortage', 'Personal Emergency', 'Other'];
 
@@ -19,34 +22,63 @@ export function TempClosureScreen({ navigation }: Props) {
   const { data, updateTempClosure } = useStoreSetup();
   const [form, setForm] = useState<TempClosureData>(
     data.tempClosure ?? {
-      reason: 'Festival / Holiday',
-      customMessage: "Closed for Diwali celebrations. We'll be back on 3rd Nov!",
-      fromDate: '01 Nov 2024',
-      toDate: '02 Nov 2024',
-      closeFromTime: '12:00 AM',
-      reopenAt: '9:00 AM',
-      notifyCustomers: true,
+      reason: '',
+      customMessage: '',
+      fromDate: '',
+      toDate: '',
+      closeFromTime: '',
+      reopenAt: '',
+      notifyCustomers: false,
     },
   );
   const [errors, setErrors] = useState<Errors>({});
+  const [pickerFor, setPickerFor] = useState<DateKey | null>(null);
 
   function set<K extends keyof TempClosureData>(key: K, value: TempClosureData[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
-    if (key === 'reason' && errors.reason) setErrors(prev => ({ ...prev, reason: undefined }));
-    if (key === 'fromDate' && errors.fromDate) setErrors(prev => ({ ...prev, fromDate: undefined }));
-    if (key === 'toDate' && errors.toDate) setErrors(prev => ({ ...prev, toDate: undefined }));
+    setErrors(prev => (prev[key as keyof Errors] ? { ...prev, [key]: undefined } : prev));
+  }
+
+  function handleDateChange(event: DateTimePickerEvent, selectedDate?: Date) {
+    const field = pickerFor;
+    if (Platform.OS === 'android') setPickerFor(null);
+    if (event.type === 'dismissed' || !selectedDate || !field) return;
+    set(field, formatShortDate(selectedDate));
+    if (Platform.OS === 'ios') setPickerFor(null);
   }
 
   function handleCloseStore() {
+    const from = parseShortDate(form.fromDate);
+    const to = parseShortDate(form.toDate);
     const nextErrors: Errors = {};
     if (!isRequired(form.reason)) nextErrors.reason = 'Select a reason';
-    if (!isRequired(form.fromDate)) nextErrors.fromDate = 'Required';
-    if (!isRequired(form.toDate)) nextErrors.toDate = 'Required';
+    if (!isRequired(form.customMessage)) nextErrors.customMessage = 'Add a message for your customers';
+    if (!from) nextErrors.fromDate = 'Required';
+    if (!to) nextErrors.toDate = 'Required';
+    else if (from && to.getTime() < from.getTime()) nextErrors.toDate = 'Must be on or after the start date';
+    if (!isRequired(form.closeFromTime)) nextErrors.closeFromTime = 'Required';
+    if (!isRequired(form.reopenAt)) nextErrors.reopenAt = 'Required';
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    updateTempClosure(form);
+    updateTempClosure({ ...form, customMessage: form.customMessage.trim(), notifyCustomers: false });
     navigation.navigate('ClosureConfirmation');
+  }
+
+  function renderDateField(key: DateKey, label: string) {
+    return (
+      <View style={styles.rowItem}>
+        <Text style={styles.label}>{label}</Text>
+        <Pressable
+          style={[styles.datePressable, errors[key] ? styles.datePressableError : null]}
+          onPress={() => setPickerFor(key)}
+        >
+          <Icon name="calendar" size={16} color={colors.textSecondary} />
+          <Text style={[styles.dateValue, !form[key] && styles.datePlaceholder]}>{form[key] || 'Select'}</Text>
+        </Pressable>
+        {errors[key] ? <Text style={styles.errorText}>{errors[key]}</Text> : null}
+      </View>
+    );
   }
 
   return (
@@ -75,41 +107,47 @@ export function TempClosureScreen({ navigation }: Props) {
           />
           <Input
             label="Custom Message for Customers"
+            required
             value={form.customMessage}
             onChangeText={text => set('customMessage', text)}
-            helperText="Shown on your store page during closure"
+            placeholder="e.g. We're closed for a short break and will be back soon"
+            helperText={errors.customMessage ? undefined : 'Shown on your store page during closure'}
+            error={errors.customMessage}
           />
         </FormSectionCard>
 
         <FormSectionCard title="Closure Period">
           <View style={styles.row}>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>From</Text>
-              <Input
-                value={form.fromDate}
-                onChangeText={text => set('fromDate', text)}
-                leftIcon="calendar"
-                error={errors.fromDate}
-              />
-            </View>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>To</Text>
-              <Input
-                value={form.toDate}
-                onChangeText={text => set('toDate', text)}
-                leftIcon="calendar"
-                error={errors.toDate}
-              />
-            </View>
+            {renderDateField('fromDate', 'From')}
+            {renderDateField('toDate', 'To')}
           </View>
+          {pickerFor ? (
+            <DateTimePicker
+              value={parseShortDate(form[pickerFor]) ?? new Date()}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              minimumDate={pickerFor === 'toDate' ? parseShortDate(form.fromDate) ?? new Date() : new Date()}
+              onChange={handleDateChange}
+            />
+          ) : null}
           <View style={styles.row}>
             <View style={styles.rowItem}>
               <Text style={styles.label}>Close From Time</Text>
-              <SelectField value={form.closeFromTime} options={TIME_OPTIONS} onChange={value => set('closeFromTime', value)} />
+              <SelectField
+                value={form.closeFromTime}
+                options={TIME_OPTIONS}
+                onChange={value => set('closeFromTime', value)}
+                error={errors.closeFromTime}
+              />
             </View>
             <View style={styles.rowItem}>
               <Text style={styles.label}>Reopen At</Text>
-              <SelectField value={form.reopenAt} options={TIME_OPTIONS} onChange={value => set('reopenAt', value)} />
+              <SelectField
+                value={form.reopenAt}
+                options={TIME_OPTIONS}
+                onChange={value => set('reopenAt', value)}
+                error={errors.reopenAt}
+              />
             </View>
           </View>
         </FormSectionCard>
@@ -117,11 +155,11 @@ export function TempClosureScreen({ navigation }: Props) {
         <View style={styles.notifyCard}>
           <View style={styles.notifyTextColumn}>
             <Text style={styles.notifyTitle}>Notify Customers</Text>
-            <Text style={styles.notifySubtitle}>Send push notification to recent customers</Text>
+            <Text style={styles.notifySubtitle}>Coming soon</Text>
           </View>
           <Switch
-            value={form.notifyCustomers}
-            onValueChange={value => set('notifyCustomers', value)}
+            value={false}
+            disabled
             trackColor={{ false: colors.border, true: colors.primary }}
             thumbColor={colors.white}
           />
@@ -132,7 +170,7 @@ export function TempClosureScreen({ navigation }: Props) {
             <Button label="Cancel" variant="outline" onPress={() => navigation.goBack()} />
           </View>
           <View style={styles.buttonRowItem}>
-            <Button label="Close Store" onPress={handleCloseStore} />
+            <Button label="Review Closure" onPress={handleCloseStore} />
           </View>
         </View>
       </View>
@@ -179,6 +217,33 @@ const styles = StyleSheet.create({
   label: {
     ...typography.caption,
     color: colors.textSecondary,
+  },
+  datePressable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    height: 48,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  datePressableError: {
+    borderColor: colors.error,
+  },
+  dateValue: {
+    ...typography.body,
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  datePlaceholder: {
+    color: colors.textSecondary,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    paddingTop: spacing.xs,
   },
   notifyCard: {
     flexDirection: 'row',

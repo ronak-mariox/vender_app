@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, Checkbox, NavHeader } from '../../components';
+import { GST_ON_FEE_PERCENT_LABEL, PLATFORM_FEE_PERCENT_LABEL } from '../../constants/fees';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'VendorAgreement'>;
@@ -19,7 +20,7 @@ const SECTIONS = [
   },
   {
     title: '3. Commission & Payment Terms',
-    body: 'Verdant charges a platform commission of 5–18% depending on the product category. Settlements are processed within T+2 business days to your registered bank account. Commission rates are subject to change with 30-day prior notice.',
+    body: `Verdant charges a commission of ${PLATFORM_FEE_PERCENT_LABEL} on the items total of each order, plus ${GST_ON_FEE_PERCENT_LABEL} GST on that commission. Settlements are paid to your registered bank account. Fee rates are subject to change with prior notice.`,
   },
   {
     title: '4. Fulfillment & Returns',
@@ -36,15 +37,18 @@ const SECTIONS = [
 ];
 
 export function VendorAgreementScreen({ navigation }: Props) {
-  const [agreedTerms, setAgreedTerms] = useState(true);
-  const [agreedSignatory, setAgreedSignatory] = useState(true);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [agreedSignatory, setAgreedSignatory] = useState(false);
   const [agreedMarketing, setAgreedMarketing] = useState(false);
 
   const canContinue = agreedTerms && agreedSignatory;
 
   function handleAccept() {
     if (!canContinue) {
-      Alert.alert('Agreement required', 'Please accept the Terms of Service to continue.');
+      Alert.alert(
+        'Agreement required',
+        'Please accept the Terms of Service and confirm you are an authorised signatory to continue.',
+      );
       return;
     }
     navigation.navigate('KYCSubmission');
@@ -55,7 +59,6 @@ export function VendorAgreementScreen({ navigation }: Props) {
       <NavHeader title="Vendor Agreement" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Text style={styles.title}>Terms of Service</Text>
-        <Text style={styles.meta}>Last updated: 01 September 2024 • Version 3.2</Text>
 
         {SECTIONS.map(section => (
           <View key={section.title} style={styles.section}>
@@ -120,11 +123,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 27,
     color: colors.textPrimary,
-  },
-  meta: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    paddingTop: 3,
   },
   section: {
     paddingTop: spacing.xl,

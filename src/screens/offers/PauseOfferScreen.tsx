@@ -1,26 +1,36 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { useOffers } from '../../context/OffersContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PauseOffer'>;
 
 export function PauseOfferScreen({ navigation, route }: Props) {
   const { offerId } = route.params;
-  const { getOffer, pauseOffer } = useOffers();
+  const { getOffer, pauseOffer, isOfferPending } = useOffers();
   const offer = getOffer(offerId);
+  const [error, setError] = useState<string | null>(null);
+  const pending = isOfferPending(offerId);
 
   function handleClose() {
+    if (pending) return;
     navigation.goBack();
   }
 
-  function handleConfirm() {
-    pauseOffer(offerId);
-    navigation.goBack();
+  async function handleConfirm() {
+    if (pending) return;
+    setError(null);
+    try {
+      await pauseOffer(offerId);
+      navigation.goBack();
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Could not pause the offer.'));
+    }
   }
 
   return (
@@ -35,7 +45,7 @@ export function PauseOfferScreen({ navigation, route }: Props) {
 
           <Text style={styles.heading}>Pause Offer?</Text>
           <Text style={styles.subtitle}>
-            {offer?.name || 'This offer'} will stop showing to customers immediately.
+            {offer?.title || 'This offer'} will stop showing to customers immediately.
           </Text>
 
           <View style={styles.noteBox}>
@@ -45,12 +55,22 @@ export function PauseOfferScreen({ navigation, route }: Props) {
             </Text>
           </View>
 
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
           <View style={styles.footer}>
-            <Pressable style={styles.cancelButton} onPress={handleClose}>
+            <Pressable style={styles.cancelButton} onPress={handleClose} disabled={pending}>
               <Text style={styles.cancelButtonText}>Keep Active</Text>
             </Pressable>
-            <Pressable style={styles.confirmButton} onPress={handleConfirm}>
-              <Text style={styles.confirmButtonText}>Pause Offer</Text>
+            <Pressable
+              style={[styles.confirmButton, pending && styles.confirmButtonDisabled]}
+              onPress={handleConfirm}
+              disabled={pending}
+            >
+              {pending ? (
+                <ActivityIndicator color={colors.white} />
+              ) : (
+                <Text style={styles.confirmButtonText}>Pause Offer</Text>
+              )}
             </Pressable>
           </View>
         </SafeAreaView>
@@ -60,6 +80,15 @@ export function PauseOfferScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    textAlign: 'center',
+    paddingTop: spacing.lg,
+  },
+  confirmButtonDisabled: {
+    opacity: 0.6,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(16,24,40,0.4)',

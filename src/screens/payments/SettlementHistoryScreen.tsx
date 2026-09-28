@@ -6,88 +6,50 @@ import { NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { Settlement, usePayments } from '../../context/PaymentsContext';
 import { colors, radii, spacing, typography } from '../../theme';
-import { PeriodFilterBar, PaymentsPeriod } from './PeriodFilterBar';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import { formatINR, sumBy } from './settlementHelpers';
 import { SettlementRow } from './SettlementRow';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'SettlementHistory'>;
 
-const MONTH_NAMES: Record<string, string> = {
-  Jan: 'January',
-  Feb: 'February',
-  Mar: 'March',
-  Apr: 'April',
-  May: 'May',
-  Jun: 'June',
-  Jul: 'July',
-  Aug: 'August',
-  Sep: 'September',
-  Oct: 'October',
-  Nov: 'November',
-  Dec: 'December',
-};
-
-const MONTH_INDEX: Record<string, number> = {
-  Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
-  Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
-};
-
-function parseSettlementDate(dateRangeLabel: string): Date | null {
-  const tokens = dateRangeLabel.trim().split(/\s+/);
-  if (tokens.length < 3) return null;
-  const [dayRange, monthAbbr, year] = tokens;
-  const endDay = Number(dayRange.split(/[–-]/).pop());
-  const monthIndex = MONTH_INDEX[monthAbbr];
-  const yearNum = Number(year);
-  if (Number.isNaN(endDay) || monthIndex === undefined || Number.isNaN(yearNum)) return null;
-  return new Date(yearNum, monthIndex, endDay);
-}
-
-function groupKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}`;
-}
-
-function formatINR(value: number): string {
-  return `₹${Math.round(Math.abs(value)).toLocaleString('en-IN')}`;
-}
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 export function SettlementHistoryScreen({ navigation }: Props) {
-  const { settlements } = usePayments();
+  const { filteredSettlements } = usePayments();
   const [search, setSearch] = useState('');
-  const [period, setPeriod] = useState<PaymentsPeriod>('month');
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return settlements;
-    return settlements.filter(
+    if (!query) return filteredSettlements;
+    return filteredSettlements.filter(
       settlement =>
-        settlement.id.toLowerCase().includes(query) ||
+        settlement.shortRef.toLowerCase().includes(query) ||
+        settlement.invoiceNumber.toLowerCase().includes(query) ||
         settlement.dateRangeLabel.toLowerCase().includes(query),
     );
-  }, [settlements, search]);
+  }, [filteredSettlements, search]);
 
   const groups = useMemo(() => {
-    const map = new Map<string, { date: Date; label: string; items: Settlement[] }>();
-    filtered.forEach(settlement => {
-      const date = parseSettlementDate(settlement.dateRangeLabel);
-      const key = date ? groupKey(date) : 'unknown';
-      const label = date ? `${MONTH_NAMES[settlement.dateRangeLabel.split(/\s+/)[1]] ?? ''} ${date.getFullYear()}` : 'Other';
+    const sorted = [...filtered].sort((a, b) => b.periodStart.localeCompare(a.periodStart));
+    const map = new Map<string, { label: string; items: Settlement[] }>();
+    sorted.forEach(settlement => {
+      const start = new Date(settlement.periodStart);
+      const valid = !Number.isNaN(start.getTime());
+      const key = valid ? `${start.getFullYear()}-${start.getMonth()}` : 'unknown';
       const existing = map.get(key);
       if (existing) {
         existing.items.push(settlement);
       } else {
-        map.set(key, { date: date ?? new Date(0), label, items: [settlement] });
+        map.set(key, {
+          label: valid ? `${MONTH_NAMES[start.getMonth()]} ${start.getFullYear()}` : 'Other',
+          items: [settlement],
+        });
       }
     });
-    return Array.from(map.values())
-      .sort((a, b) => b.date.getTime() - a.date.getTime())
-      .map(group => ({
-        ...group,
-        items: group.items.sort((a, b) => {
-          const dateA = parseSettlementDate(a.dateRangeLabel)?.getTime() ?? 0;
-          const dateB = parseSettlementDate(b.dateRangeLabel)?.getTime() ?? 0;
-          return dateB - dateA;
-        }),
-      }));
+    return Array.from(map.entries()).map(([key, group]) => ({ key, ...group }));
   }, [filtered]);
 
   return (
@@ -108,7 +70,7 @@ export function SettlementHistoryScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.filterBarWrap}>
-          <PeriodFilterBar value={period} onChange={setPeriod} />
+          <PeriodFilterBar />
         </View>
 
         {groups.length === 0 ? (
@@ -116,14 +78,13 @@ export function SettlementHistoryScreen({ navigation }: Props) {
             <Text style={styles.emptyStateText}>No settlements found</Text>
           </View>
         ) : (
-          groups.map((group, index) => {
-            const total = group.items.reduce((sum, item) => sum + item.netPayout, 0);
+          groups.map(group => {
+            const total = sumBy(group.items, item => item.netPayout);
             return (
-              <View key={group.label + index}>
+              <View key={group.key}>
                 <View style={styles.groupHeader}>
                   <Text style={styles.groupHeaderText}>
-                    {group.label.toUpperCase()}
-                    {index > 0 ? ` · ${formatINR(total)} total` : ''}
+                    {group.label.toUpperCase()} · {formatINR(total)} total
                   </Text>
                 </View>
                 {group.items.map(settlement => (

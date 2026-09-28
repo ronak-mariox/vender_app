@@ -11,10 +11,11 @@ type Props = {
   onClose: () => void;
   onEdit: () => void;
   onPauseResume: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 };
 
-export function OfferActionsSheet({ visible, offer, onClose, onEdit, onPauseResume, onDelete }: Props) {
+export function OfferActionsSheet({ visible, offer, onClose, onEdit, onPauseResume, onDuplicate, onDelete }: Props) {
   if (!offer) return null;
 
   const items: { icon: IconName; label: string; tone: 'default' | 'danger'; onPress: () => void }[] = [
@@ -28,6 +29,7 @@ export function OfferActionsSheet({ visible, offer, onClose, onEdit, onPauseResu
       onPress: onPauseResume,
     });
   }
+  items.push({ icon: 'copy', label: 'Duplicate Offer', tone: 'default', onPress: onDuplicate });
   items.push({ icon: 'trash', label: 'Delete Offer', tone: 'danger', onPress: onDelete });
 
   return (
@@ -37,7 +39,7 @@ export function OfferActionsSheet({ visible, offer, onClose, onEdit, onPauseResu
           <SafeAreaView edges={['bottom']} style={styles.sheet}>
             <View style={styles.handle} />
             <Text style={styles.title} numberOfLines={1}>
-              {offer.name}
+              {offer.title}
             </Text>
             {items.map(item => (
               <Pressable

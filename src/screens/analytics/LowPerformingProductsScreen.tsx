@@ -2,33 +2,40 @@ import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, NavHeader, ScreenContainer } from '../../components';
+import { NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { LowPerformingProduct, useAnalytics } from '../../context/AnalyticsContext';
 import { colors, radii, spacing, typography } from '../../theme';
-import { AnalyticsFilterBar, AnalyticsPeriod } from './AnalyticsFilterBar';
+import { AnalyticsFilterBar } from './AnalyticsFilterBar';
+import { formatINR } from './analyticsHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'LowPerformingProducts'>;
 
-type SortTab = 'sales' | 'views' | 'orders';
+type SortTab = 'revenue' | 'stale' | 'none';
 
 const TABS: { key: SortTab; label: string }[] = [
-  { key: 'sales', label: 'By Sales' },
-  { key: 'views', label: 'By Views' },
-  { key: 'orders', label: 'No Orders' },
+  { key: 'revenue', label: 'By Revenue' },
+  { key: 'stale', label: 'Longest Unsold' },
+  { key: 'none', label: 'No Sales' },
 ];
 
 function sortProducts(products: LowPerformingProduct[], tab: SortTab) {
+  if (tab === 'none') return products.filter(p => p.unitsSold === 0);
   const copy = [...products];
-  if (tab === 'sales') return copy.sort((a, b) => a.revenue - b.revenue);
+  if (tab === 'revenue') return copy.sort((a, b) => a.revenue - b.revenue);
   // A product that's never sold (null) is treated as the most stale.
-  if (tab === 'views') return copy.sort((a, b) => (b.daysSinceLastSale ?? Infinity) - (a.daysSinceLastSale ?? Infinity));
-  return copy.sort((a, b) => a.unitsSold - b.unitsSold);
+  return copy.sort((a, b) => (b.daysSinceLastSale ?? Infinity) - (a.daysSinceLastSale ?? Infinity));
+}
+
+function lastSoldLabel(days: number | null): string {
+  if (days === null) return 'No sales in this period';
+  if (days === 0) return 'Last sold today';
+  return `Last sold ${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 export function LowPerformingProductsScreen({ navigation }: Props) {
-  const { lowPerformingProducts, period, setPeriod } = useAnalytics();
-  const [tab, setTab] = useState<SortTab>('sales');
+  const { lowPerformingProducts, periodLabel, isLoading } = useAnalytics();
+  const [tab, setTab] = useState<SortTab>('revenue');
 
   const sortedProducts = useMemo(
     () => sortProducts(lowPerformingProducts, tab),
@@ -38,12 +45,8 @@ export function LowPerformingProductsScreen({ navigation }: Props) {
   function handleTakeAction(product: LowPerformingProduct) {
     Alert.alert(
       product.name,
-      `${product.suggestion}\n\nStock on hand: ${product.stock} units · Revenue this period: ₹${product.revenue.toLocaleString('en-IN')}`,
+      `${product.suggestion}\n\nStock on hand: ${product.stock} units · Revenue (${periodLabel}): ${formatINR(product.revenue)}`,
     );
-  }
-
-  function handleReviewAll() {
-    Alert.alert('Review All Low Performers', 'Coming soon.');
   }
 
   return (
@@ -51,14 +54,16 @@ export function LowPerformingProductsScreen({ navigation }: Props) {
       <NavHeader title="Low Performers" onBack={() => navigation.goBack()} />
 
       <View style={styles.filterBarWrap}>
-        <AnalyticsFilterBar value={period} onChange={setPeriod} />
+        <AnalyticsFilterBar />
       </View>
 
       <View style={styles.bannerWrap}>
         <View style={styles.banner}>
           <Icon name="alert-circle" size={18} color={colors.error} />
           <Text style={styles.bannerText}>
-            {lowPerformingProducts.length} products are underperforming this week.
+            {lowPerformingProducts.length === 0
+              ? `No slow-moving active products · ${periodLabel}`
+              : `${lowPerformingProducts.length} slowest-selling active product${lowPerformingProducts.length === 1 ? '' : 's'} · ${periodLabel}`}
           </Text>
         </View>
       </View>
@@ -81,16 +86,17 @@ export function LowPerformingProductsScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.listSection}>
-        {sortedProducts.map(product => {
+        {!isLoading && sortedProducts.length === 0 ? <Text style={styles.emptyText}>Nothing to show here.</Text> : null}
+        {sortedProducts.map((product, index) => {
           const severe = product.unitsSold <= 2;
           return (
-            <View key={product.name} style={styles.row}>
+            <View key={`${product.name}-${index}`} style={styles.row}>
               <View style={styles.rowText}>
                 <Text style={styles.rowName} numberOfLines={1}>
                   {product.name}
                 </Text>
                 <Text style={styles.rowSubtitle}>
-                  {product.daysSinceLastSale === null ? 'Never sold' : `Last sold ${product.daysSinceLastSale} days ago`}
+                  {lastSoldLabel(product.daysSinceLastSale)} · {product.stock} in stock
                 </Text>
               </View>
               <View style={styles.rowMeta}>
@@ -106,9 +112,6 @@ export function LowPerformingProductsScreen({ navigation }: Props) {
         })}
       </View>
 
-      <View style={styles.footer}>
-        <Button label="Review All Low Performers" variant="outline" onPress={handleReviewAll} />
-      </View>
     </ScreenContainer>
   );
 }
@@ -210,9 +213,10 @@ const styles = StyleSheet.create({
     ...typography.tinyBold,
     color: colors.primary,
   },
-  footer: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xxxl,
+  emptyText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    paddingVertical: spacing.xl,
   },
 });

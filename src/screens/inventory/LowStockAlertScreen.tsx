@@ -1,19 +1,19 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, Switch } from '../../components';
+import { Button } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { isInventoryCategory } from '../../utils/inventory';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'LowStockAlert'>;
 
 export function LowStockAlertScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
-  const [autoAlerts, setAutoAlerts] = useState(true);
 
   const lowStockProducts = useMemo(
     () => products.filter(product => isInventoryCategory(product, 'low-stock')),
@@ -43,16 +43,18 @@ export function LowStockAlertScreen({ navigation }: Props) {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.toggleCard}>
           <View style={styles.toggleTextColumn}>
-            <Text style={styles.toggleTitle}>Auto Low-Stock Alerts</Text>
-            <Text style={styles.toggleSubtitle}>Get notified when stock falls below reorder level</Text>
+            <Text style={styles.toggleTitle}>Low-Stock Alerts</Text>
+            <Text style={styles.toggleSubtitle}>
+              You get a notification when a variant's stock drops to the product's reorder level. Set the reorder level
+              when editing a product.
+            </Text>
           </View>
-          <Switch value={autoAlerts} onChange={setAutoAlerts} />
         </View>
 
         <Text style={styles.sectionTitle}>Products Needing Restock</Text>
 
         {lowStockProducts.map(product => {
-          const target = Math.max(product.reorderLevel * 2, product.stock, 1);
+          const target = Math.max(product.maxStock || product.reorderLevel, product.stock, 1);
           const ratio = Math.min(1, product.stock / target);
           const critical = product.stock <= product.reorderLevel / 2;
           return (
@@ -60,9 +62,12 @@ export function LowStockAlertScreen({ navigation }: Props) {
               key={product.id}
               style={[styles.productCard, critical && styles.productCardCritical]}
             >
-              <View style={styles.productIcon}>
-                <Icon name="package" size={22} color={colors.warning} />
-              </View>
+              <ProductThumb
+                imageUrl={product.images?.[0]}
+                style={styles.productIcon}
+                iconSize={22}
+                iconColor={colors.warning}
+              />
               <View style={styles.productTextColumn}>
                 <Text style={styles.productName} numberOfLines={1}>
                   {product.name}

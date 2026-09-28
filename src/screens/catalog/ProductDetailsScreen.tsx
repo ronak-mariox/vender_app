@@ -3,10 +3,11 @@ import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Badge, BadgeTone } from '../../components';
+import { Badge, BadgeTone, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog, ProductStatus } from '../../context/ProductCatalogContext';
 import { resolveAssetUrl } from '../../utils/resolveAssetUrl';
+import { formatEventTimestamp } from '../../utils/time';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductDetails'>;
@@ -32,6 +33,7 @@ export function ProductDetailsScreen({ navigation, route }: Props) {
   if (!product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <NavHeader title="Product" onBack={() => navigation.goBack()} />
         <View style={styles.missingState}>
           <Icon name="package" size={32} color={colors.textTertiary} />
           <Text style={styles.missingText}>This product is no longer available.</Text>
@@ -40,7 +42,9 @@ export function ProductDetailsScreen({ navigation, route }: Props) {
     );
   }
 
-  const isActive = product.status === 'active' || product.status === 'low-stock';
+  const isActive =
+    product.status === 'active' || product.status === 'low-stock' || product.status === 'out-of-stock';
+  const variants = product.variants ?? [];
   const statusMeta = STATUS_META[product.status];
   const discountPercent =
     product.mrp > 0 && product.mrp > product.sellingPrice
@@ -72,7 +76,7 @@ export function ProductDetailsScreen({ navigation, route }: Props) {
             <View style={styles.titleColumn}>
               <Text style={styles.name}>{product.name}</Text>
               <Text style={styles.meta}>
-                {product.brand} · {product.categoryName}
+                {[product.brand, product.categoryName, product.subcategoryName].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <Badge label={statusMeta.label} tone={statusMeta.tone} />
@@ -105,8 +109,15 @@ export function ProductDetailsScreen({ navigation, route }: Props) {
           </View>
         </View>
 
+        {product.status === 'rejected' && product.rejectionReason ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Rejection Reason</Text>
+            <Text style={styles.meta}>{product.rejectionReason}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pricing</Text>
+          <Text style={styles.sectionTitle}>Pricing{variants.length > 1 ? ' (primary variant)' : ''}</Text>
           <View style={styles.pricingRow}>
             <View style={styles.pricingBox}>
               <Text style={styles.pricingLabel}>MRP</Text>
@@ -133,26 +144,57 @@ export function ProductDetailsScreen({ navigation, route }: Props) {
           <View style={styles.stockRow}>
             <View style={styles.stockBox}>
               <Text style={styles.stockValue}>{product.stock}</Text>
-              <Text style={styles.stockLabel}>{product.stock > 0 ? 'In Stock' : 'Out of Stock'}</Text>
+              <Text style={styles.stockLabel}>
+                {product.stock > 0 ? (variants.length > 1 ? 'Total in stock' : 'In Stock') : 'Out of Stock'}
+              </Text>
             </View>
             <View style={styles.stockMetaColumn}>
               <Text style={styles.stockMetaLabel}>Reorder Level</Text>
-              <Text style={styles.stockMetaValue}>{product.reorderLevel} units</Text>
+              <Text style={styles.stockMetaValue}>{product.reorderLevel ? `${product.reorderLevel} units` : 'Not set'}</Text>
               <Text style={[styles.stockMetaLabel, styles.stockMetaLabelSpaced]}>Max Stock</Text>
-              <Text style={styles.stockMetaValue}>{product.maxStock} units</Text>
+              <Text style={styles.stockMetaValue}>{product.maxStock ? `${product.maxStock} units` : 'Not set'}</Text>
             </View>
           </View>
         </View>
 
+        {variants.length > 1 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Variants</Text>
+            {variants.map((variant, index) => (
+              <DetailRow
+                key={variant.id}
+                icon="layers"
+                label={`${variant.size}${variant.isPrimary ? ' (primary)' : ''}`}
+                value={`₹${variant.sellingPrice} · MRP ₹${variant.mrp} · ${variant.stock} units`}
+                last={index === variants.length - 1}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        {product.description ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Description</Text>
+            <Text style={styles.meta}>{product.description}</Text>
+          </View>
+        ) : null}
+
         <View style={[styles.section, styles.lastSection]}>
           <Text style={styles.sectionTitle}>Product Details</Text>
-          <DetailRow icon="hash" label="SKU" value={product.sku} mono />
+          <DetailRow icon="hash" label="SKU" value={product.sku || 'Not set'} mono />
           {product.barcode ? <DetailRow icon="barcode" label="Barcode" value={product.barcode} mono /> : null}
           {product.packSize ? <DetailRow icon="tag" label="Pack Size" value={product.packSize} /> : null}
           {product.gstRate ? (
             <DetailRow icon="percent" label="GST Rate" value={`${product.gstRate}%${product.gstRate === '0' ? ' (Exempt)' : ''}`} />
           ) : null}
-          {product.hsnCode ? <DetailRow icon="hash" label="HSN Code" value={product.hsnCode} mono last /> : null}
+          {product.hsnCode ? <DetailRow icon="hash" label="HSN Code" value={product.hsnCode} mono /> : null}
+          {product.countryOfOrigin ? <DetailRow icon="globe" label="Country of Origin" value={product.countryOfOrigin} /> : null}
+          <DetailRow
+            icon="clock"
+            label="Last Updated"
+            value={product.updatedAt ? formatEventTimestamp(product.updatedAt) : '—'}
+            last
+          />
         </View>
       </ScrollView>
     </SafeAreaView>

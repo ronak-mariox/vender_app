@@ -1,74 +1,54 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ScreenContainer } from '../../components';
-import { Icon } from '../../icons/Icon';
-import { useAnalytics } from '../../context/AnalyticsContext';
+import { kpiNumber, useAnalytics } from '../../context/AnalyticsContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
-import { AnalyticsFilterBar, AnalyticsPeriod } from './AnalyticsFilterBar';
+import { AnalyticsFilterBar } from './AnalyticsFilterBar';
 import { TrendLineChart } from './TrendLineChart';
+import { formatDayLabel, formatINR } from './analyticsHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'AverageOrderValue'>;
 
-// Not modeled in AnalyticsContext — illustrative content matching the Figma copy/values exactly.
-const TIME_OF_DAY = [
-  { label: 'Morning', range: '6–11 AM', value: '₹184' },
-  { label: 'Afternoon', range: '11–4 PM', value: '₹220' },
-  { label: 'Evening', range: '4–9 PM', value: '₹267' },
-  { label: 'Night', range: '9 PM+', value: '₹198' },
-];
-
-const CATEGORY_AOV = [
-  { label: 'Dairy', value: 156 },
-  { label: 'Staples', value: 248 },
-  { label: 'Beverages', value: 196 },
-  { label: 'Snacks', value: 142 },
-];
-
-const AOV_TIPS = [
-  'Bundle complementary products together',
-  'Set ₹300+ free delivery threshold',
-  'Suggest add-ons at checkout',
-  'Offer quantity discounts on staples',
-];
-
 export function AverageOrderValueScreen({ navigation }: Props) {
-  const { kpiStats, revenueTrend, period, setPeriod } = useAnalytics();
+  const { kpiStats, revenueDates, periodLabel } = useAnalytics();
 
   const avgOrder = kpiStats.find(stat => stat.key === 'avgOrder');
-  const changeBadge = avgOrder?.changeLabel.split(' vs')[0] ?? '';
+  const aovTrend = useMemo(() => avgOrder?.sparkline ?? [], [avgOrder]);
 
-  // AOV isn't tracked as its own trend series in AnalyticsContext — derive an
-  // illustrative trend by rescaling the shared revenue trend into an AOV-like range.
-  const aovTrend = useMemo(() => {
-    const min = Math.min(...revenueTrend);
-    const max = Math.max(...revenueTrend);
-    const range = max - min || 1;
-    return revenueTrend.map(value => Math.round(190 + ((value - min) / range) * 40));
-  }, [revenueTrend]);
+  const summary = [
+    { label: 'Revenue', value: kpiStats.find(stat => stat.key === 'revenue')?.value ?? '—' },
+    { label: 'Orders', value: kpiStats.find(stat => stat.key === 'orders')?.value ?? '—' },
+    { label: 'Avg Order', value: avgOrder?.value ?? '—' },
+  ];
 
-  const maxCategoryValue = Math.max(...CATEGORY_AOV.map(item => item.value));
+  const dailyAov = useMemo(
+    () =>
+      aovTrend
+        .map((value, index) => ({ key: revenueDates[index] ?? String(index), label: formatDayLabel(revenueDates[index]), value }))
+        .filter(day => day.value > 0)
+        .reverse(),
+    [aovTrend, revenueDates],
+  );
+  const maxDailyAov = Math.max(1, ...dailyAov.map(day => day.value));
+  const hasRevenue = kpiNumber(kpiStats, 'revenue') > 0;
 
   return (
     <ScreenContainer scrollable>
       <NavHeader title="Avg Order Value" onBack={() => navigation.goBack()} />
 
       <View style={styles.filterBarWrap}>
-        <AnalyticsFilterBar value={period} onChange={setPeriod} />
+        <AnalyticsFilterBar />
       </View>
 
       <View style={styles.section}>
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>Average Order Value</Text>
+          <Text style={styles.heroLabel}>Average Order Value · {periodLabel}</Text>
           <View style={styles.heroValueRow}>
             <Text style={styles.heroValue}>{avgOrder?.value ?? '—'}</Text>
-            {changeBadge ? (
-              <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeText}>{changeBadge}</Text>
-              </View>
-            ) : null}
           </View>
+          {avgOrder?.changeLabel ? <Text style={styles.heroChange}>{avgOrder.changeLabel}</Text> : null}
           <View style={styles.heroChart}>
             <TrendLineChart data={aovTrend} height={60} color={colors.warning} />
           </View>
@@ -76,53 +56,36 @@ export function AverageOrderValueScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>AOV by Time of Day</Text>
         <View style={styles.timeRow}>
-          {TIME_OF_DAY.map(item => (
+          {summary.map(item => (
             <View key={item.label} style={styles.timeCard}>
               <Text style={styles.timeLabel}>{item.label}</Text>
-              <Text style={styles.timeRange}>{item.range}</Text>
               <Text style={styles.timeValue}>{item.value}</Text>
             </View>
           ))}
         </View>
+        <Text style={styles.footnote}>Avg order = delivered revenue ÷ orders placed in the period.</Text>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>AOV by Category</Text>
-        <View style={styles.categoryList}>
-          {CATEGORY_AOV.map(item => (
-            <View key={item.label} style={styles.categoryRow}>
-              <View style={styles.categoryHeaderRow}>
-                <Text style={styles.categoryLabel}>{item.label}</Text>
-                <Text style={styles.categoryValue}>₹{item.value}</Text>
+      <View style={[styles.section, styles.lastSection]}>
+        <Text style={styles.sectionTitle}>AOV by Day</Text>
+        {dailyAov.length === 0 ? (
+          <Text style={styles.footnote}>{hasRevenue ? 'No daily breakdown available.' : 'No delivered orders in this period.'}</Text>
+        ) : (
+          <View style={styles.categoryList}>
+            {dailyAov.map(day => (
+              <View key={day.key} style={styles.categoryRow}>
+                <View style={styles.categoryHeaderRow}>
+                  <Text style={styles.categoryLabel}>{day.label}</Text>
+                  <Text style={styles.categoryValue}>{formatINR(day.value)}</Text>
+                </View>
+                <View style={styles.categoryTrack}>
+                  <View style={[styles.categoryFill, { width: `${(day.value / maxDailyAov) * 100}%` }]} />
+                </View>
               </View>
-              <View style={styles.categoryTrack}>
-                <View
-                  style={[
-                    styles.categoryFill,
-                    { width: `${(item.value / maxCategoryValue) * 100}%` },
-                  ]}
-                />
-              </View>
-            </View>
-          ))}
-        </View>
-      </View>
-
-      <View style={[styles.section, styles.tipsSection]}>
-        <View style={styles.tipsCard}>
-          <View style={styles.tipsHeaderRow}>
-            <Icon name="info" size={16} color={colors.primary} />
-            <Text style={styles.tipsHeaderText}>How to Increase AOV</Text>
+            ))}
           </View>
-          {AOV_TIPS.map(tip => (
-            <View key={tip} style={styles.tipRow}>
-              <View style={styles.tipDot} />
-              <Text style={styles.tipText}>{tip}</Text>
-            </View>
-          ))}
-        </View>
+        )}
       </View>
     </ScreenContainer>
   );
@@ -137,7 +100,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xl,
   },
-  tipsSection: {
+  lastSection: {
     paddingBottom: spacing.xxxl,
   },
   heroCard: {
@@ -162,16 +125,9 @@ const styles = StyleSheet.create({
     lineHeight: 45,
     color: colors.textPrimary,
   },
-  heroBadge: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.full,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 3,
-  },
-  heroBadgeText: {
+  heroChange: {
     ...typography.captionSemibold,
-    lineHeight: 18,
-    color: colors.white,
+    color: colors.warningDark,
   },
   heroChart: {
     paddingTop: spacing.lg,
@@ -199,13 +155,6 @@ const styles = StyleSheet.create({
   timeLabel: {
     ...typography.tinyBold,
     color: colors.textPrimary,
-    textAlign: 'center',
-  },
-  timeRange: {
-    ...typography.tiny,
-    fontSize: 10,
-    lineHeight: 15,
-    color: colors.textSecondary,
     textAlign: 'center',
   },
   timeValue: {
@@ -246,38 +195,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     backgroundColor: colors.warning,
   },
-  tipsCard: {
-    backgroundColor: colors.primarySurface,
-    borderWidth: 1,
-    borderColor: colors.primaryBorder,
-    borderRadius: radii.lg,
-    padding: spacing.xl,
-    gap: spacing.md,
-  },
-  tipsHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  tipsHeaderText: {
-    ...typography.bodySemibold,
-    color: colors.primary,
-  },
-  tipRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  tipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: radii.full,
-    backgroundColor: colors.primary,
-    marginTop: 7,
-  },
-  tipText: {
-    ...typography.label,
-    fontFamily: fontFamilies.regular,
-    color: colors.textPrimary,
-    flex: 1,
+  footnote: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    paddingTop: spacing.md,
   },
 });

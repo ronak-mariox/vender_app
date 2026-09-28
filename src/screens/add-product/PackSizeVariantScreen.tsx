@@ -12,9 +12,13 @@ import {
   Switch,
 } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { PACK_TYPES, WEIGHT_UNITS } from '../../data/categories';
-import { ProductVariant, useProductDraft } from '../../context/ProductDraftContext';
-import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { DEFAULT_PACK_UNITS } from '../../data/productOptions';
+import { ADD_PRODUCT_TOTAL_STEPS, ProductVariant, useProductDraft } from '../../context/ProductDraftContext';
+import {
+  resolveVariantConfigs,
+  useProductCatalog,
+  type CategoryVariantConfig,
+} from '../../context/ProductCatalogContext';
 import { isNonNegativeInteger, isPositiveNumber, isRequired, type FormErrors } from '../../utils/validators';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -24,43 +28,73 @@ type Errors = FormErrors<'netWeight'>;
 type VariantField = 'size' | 'mrp' | 'sellingPrice' | 'stock';
 type VariantErrors = Partial<Record<VariantField, string>>;
 
+const OTHER_OPTION = 'Other';
+
+const FALLBACK_CONFIG: CategoryVariantConfig = { kind: 'weight_volume', label: 'Weight/Volume' };
+
+function typeChipLabel(config: CategoryVariantConfig): string {
+  return config.kind === 'none' ? 'Single item' : config.label;
+}
+
 export function PackSizeVariantScreen({ navigation }: Props) {
   const { draft, updatePackSize } = useProductDraft();
   const { categories } = useProductCatalog();
   const category = categories.find(c => c.id === draft.category?.categoryId);
-  const subcategory = category?.subcategories.find(s => s.id === draft.category?.subcategoryId);
-  // A subcategory's own variantConfig overrides its category's — e.g. Fashion's
-  // "Dresses" needs clothing sizes while its "Watches" subcategory doesn't.
-  const variantConfig = subcategory?.variantConfig ?? category?.variantConfig;
-  const isAttributeKind = variantConfig?.kind === 'attribute';
-  const unitOptions = variantConfig?.kind === 'weight_volume'
-    ? variantConfig.units ?? WEIGHT_UNITS
-    : WEIGHT_UNITS;
-  const attributeOptions = variantConfig?.options ?? [];
-  const variantLabel = variantConfig?.label ?? 'Size';
+  const resolved = resolveVariantConfigs(category, draft.category?.subcategoryId);
+  const configs = resolved.length > 0 ? resolved : [FALLBACK_CONFIG];
+
+  const [typeLabel, setTypeLabel] = useState(
+    configs.some(config => config.label === draft.packSize?.variantTypeLabel)
+      ? (draft.packSize?.variantTypeLabel as string)
+      : configs[0].label,
+  );
+  const variantConfig = configs.find(config => config.label === typeLabel) ?? configs[0];
+  const isAttributeKind = variantConfig.kind === 'attribute';
+  const isSingleItem = variantConfig.kind === 'none';
+  const unitOptions =
+    variantConfig.kind === 'weight_volume' && variantConfig.units?.length ? variantConfig.units : DEFAULT_PACK_UNITS;
+  const attributeOptions = variantConfig.options ?? [];
+  const allowCustom = isAttributeKind && (variantConfig.allowCustom === true || attributeOptions.length === 0);
+  const variantLabel = variantConfig.label;
 
   const [netWeight, setNetWeight] = useState(draft.packSize?.netWeight ?? '');
-  const [unit, setUnit] = useState(draft.packSize?.unit ?? unitOptions[0]);
-  const [packType, setPackType] = useState(draft.packSize?.packType ?? '');
-  const [itemsPerPack, setItemsPerPack] = useState(draft.packSize?.itemsPerPack ?? '1');
+  const [unit, setUnit] = useState(
+    draft.packSize?.unit && unitOptions.includes(draft.packSize.unit) ? draft.packSize.unit : unitOptions[0],
+  );
   const [variantsEnabled, setVariantsEnabled] = useState(draft.packSize?.variantsEnabled ?? isAttributeKind);
   const [variants, setVariants] = useState<ProductVariant[]>(draft.packSize?.variants ?? []);
+  const [customVariantIds, setCustomVariantIds] = useState<string[]>(() =>
+    isAttributeKind
+      ? (draft.packSize?.variants ?? [])
+          .filter(variant => variant.size && !attributeOptions.includes(variant.size))
+          .map(variant => variant.id)
+      : [],
+  );
   const [errors, setErrors] = useState<Errors>({});
   const [variantErrors, setVariantErrors] = useState<Record<string, VariantErrors>>({});
   const [variantsError, setVariantsError] = useState<string | undefined>();
 
+  function selectType(config: CategoryVariantConfig) {
+    if (config.label === typeLabel) return;
+    setTypeLabel(config.label);
+    setNetWeight('');
+    setUnit(config.kind === 'weight_volume' && config.units?.length ? config.units[0] : DEFAULT_PACK_UNITS[0]);
+    setVariantsEnabled(config.kind === 'attribute');
+    setVariants([]);
+    setCustomVariantIds([]);
+    setErrors({});
+    setVariantErrors({});
+    setVariantsError(undefined);
+  }
+
   function addVariant() {
+    setVariantsError(undefined);
+    const id = `local-${Date.now()}-${variants.length}`;
     setVariants(prev => [
       ...prev,
-      {
-        id: `v${Date.now()}`,
-        size: '',
-        mrp: '',
-        sellingPrice: '',
-        stock: '',
-        isPrimary: prev.length === 0,
-      },
+      { id, size: '', mrp: '', sellingPrice: '', stock: '', isPrimary: prev.length === 0 },
     ]);
+    if (isAttributeKind && attributeOptions.length === 0) setCustomVariantIds(prev => [...prev, id]);
   }
 
   function updateVariant(id: string, patch: Partial<ProductVariant>) {
@@ -75,8 +109,25 @@ export function PackSizeVariantScreen({ navigation }: Props) {
     }
   }
 
+  function selectOption(id: string, option: string) {
+    setCustomVariantIds(prev => prev.filter(item => item !== id));
+    updateVariant(id, { size: option });
+  }
+
+  function selectCustomOption(id: string) {
+    setCustomVariantIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+    updateVariant(id, { size: '' });
+  }
+
   function removeVariant(id: string) {
-    setVariants(prev => prev.filter(variant => variant.id !== id));
+    setVariants(prev => {
+      const next = prev.filter(variant => variant.id !== id);
+      if (next.length > 0 && !next.some(variant => variant.isPrimary)) {
+        next[0] = { ...next[0], isPrimary: true };
+      }
+      return next;
+    });
+    setCustomVariantIds(prev => prev.filter(item => item !== id));
     setVariantErrors(prev => {
       const next = { ...prev };
       delete next[id];
@@ -89,18 +140,38 @@ export function PackSizeVariantScreen({ navigation }: Props) {
   }
 
   function handleContinue() {
+    if (isSingleItem) {
+      updatePackSize({
+        netWeight: '',
+        unit: '',
+        variantsEnabled: false,
+        variants: [],
+        variantTypeLabel: typeLabel,
+        singleItem: true,
+      });
+      navigation.navigate('ProductMRP');
+      return;
+    }
+
+    const perVariant = isAttributeKind || variantsEnabled;
     const nextErrors: Errors = {};
-    if (!isAttributeKind && !netWeight.trim()) {
+    if (!perVariant && !isPositiveNumber(netWeight.trim())) {
       nextErrors.netWeight = 'Enter the net weight or volume';
     }
 
     let nextVariantsError: string | undefined;
-    if (isAttributeKind && variants.length === 0) {
-      nextVariantsError = `Add at least one ${variantLabel.toLowerCase()}`;
+    if (perVariant && variants.length === 0) {
+      nextVariantsError = isAttributeKind
+        ? `Add at least one ${variantLabel.toLowerCase()}`
+        : 'Add at least one size, or turn off variants';
+    }
+    const labels = variants.map(variant => variant.size.trim().toLowerCase()).filter(Boolean);
+    if (perVariant && new Set(labels).size !== labels.length) {
+      nextVariantsError = `Each ${variantLabel.toLowerCase()} can only be added once`;
     }
 
     const nextVariantErrors: Record<string, VariantErrors> = {};
-    if (variantsEnabled) {
+    if (perVariant) {
       variants.forEach(variant => {
         const rowErrors: VariantErrors = {};
         if (!isRequired(variant.size)) rowErrors.size = 'Required';
@@ -130,14 +201,14 @@ export function PackSizeVariantScreen({ navigation }: Props) {
     }
 
     updatePackSize({
-      netWeight: isAttributeKind ? '' : netWeight.trim(),
+      netWeight: perVariant ? '' : netWeight.trim(),
       unit: isAttributeKind ? '' : unit,
-      packType: isAttributeKind ? '' : packType,
-      itemsPerPack: isAttributeKind ? '1' : itemsPerPack.trim() || '1',
-      variantsEnabled,
-      variants,
+      variantsEnabled: perVariant,
+      variants: perVariant ? variants.map(variant => ({ ...variant, size: variant.size.trim() })) : [],
+      variantTypeLabel: typeLabel,
+      singleItem: false,
     });
-    navigation.navigate('ProductMRP');
+    navigation.navigate(perVariant ? 'ProductTaxInfo' : 'ProductMRP');
   }
 
   return (
@@ -145,146 +216,187 @@ export function PackSizeVariantScreen({ navigation }: Props) {
       <AddProductHeader
         title="Pack Size & Variants"
         currentStep={5}
+        totalSteps={ADD_PRODUCT_TOTAL_STEPS}
         onBack={() => navigation.goBack()}
-        onSaveDraft={() => navigation.navigate('ProductCatalog')}
       />
-      <ScrollView contentContainerStyle={styles.content}>
-        {!isAttributeKind ? (
-          <FormSectionCard title="Primary Pack Size">
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {configs.length > 1 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>How is this product sold?</Text>
+            <Text style={styles.variantsSubtitle}>Pick what fits this product best.</Text>
+            <View style={styles.attributeChipsRow}>
+              {configs.map(config => {
+                const selected = config.label === typeLabel;
+                return (
+                  <Pressable
+                    key={config.label}
+                    style={[styles.typeChip, selected && styles.attributeChipSelected]}
+                    onPress={() => selectType(config)}
+                  >
+                    <Text style={[styles.attributeChipText, selected && styles.attributeChipTextSelected]}>
+                      {typeChipLabel(config)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {isSingleItem ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Single item</Text>
+            <Text style={styles.variantsSubtitle}>
+              This product is sold as one piece, so there is no size or unit to enter. You will set one price and one
+              stock quantity in the next steps.
+            </Text>
+          </View>
+        ) : null}
+
+        {!isAttributeKind && !isSingleItem ? (
+          <FormSectionCard title={variantsEnabled ? 'Unit' : 'Pack Size'}>
             <View style={styles.row}>
-              <View style={styles.weightField}>
-                <Input
-                  label="Net Weight / Volume"
-                  required
-                  value={netWeight}
-                  onChangeText={text => {
-                    setNetWeight(text);
-                    if (errors.netWeight) setErrors(prev => ({ ...prev, netWeight: undefined }));
-                  }}
-                  placeholder="500"
-                  keyboardType="numeric"
-                  error={errors.netWeight}
-                />
-              </View>
+              {variantsEnabled ? null : (
+                <View style={styles.weightField}>
+                  <Input
+                    label="Net Weight / Volume"
+                    required
+                    value={netWeight}
+                    onChangeText={text => {
+                      setNetWeight(text.replace(/[^0-9.]/g, ''));
+                      if (errors.netWeight) setErrors(prev => ({ ...prev, netWeight: undefined }));
+                    }}
+                    placeholder="500"
+                    keyboardType="numeric"
+                    error={errors.netWeight}
+                  />
+                </View>
+              )}
               <View style={styles.unitField}>
                 <SelectField label="Unit" value={unit} options={unitOptions} onChange={setUnit} />
               </View>
             </View>
-
-            <SelectField
-              label="Pack Type"
-              value={packType}
-              options={PACK_TYPES}
-              onChange={setPackType}
-              placeholder="Select pack type"
-            />
-
-            <Input
-              label="Items per Pack"
-              value={itemsPerPack}
-              onChangeText={setItemsPerPack}
-              placeholder="1"
-              keyboardType="numeric"
-              helperText="e.g. 6 for a pack of 6 bottles"
-            />
           </FormSectionCard>
         ) : null}
 
-        <View style={styles.card}>
-          <View style={styles.variantsHeaderRow}>
-            <Text style={styles.cardTitle}>{isAttributeKind ? variantLabel : 'Variants (Optional)'}</Text>
-            {isAttributeKind ? null : <Switch value={variantsEnabled} onChange={setVariantsEnabled} />}
-          </View>
-          <Text style={styles.variantsSubtitle}>
-            {isAttributeKind
-              ? `Add each ${variantLabel.toLowerCase()} this product is available in`
-              : 'Add multiple sizes/weights for the same product'}
-          </Text>
-          {variantsError ? <Text style={styles.errorText}>{variantsError}</Text> : null}
-
-          {variantsEnabled || isAttributeKind ? (
-            <View style={styles.variantsList}>
-              {variants.map(variant => (
-                <View key={variant.id} style={[styles.variantRow, variant.isPrimary && styles.variantRowPrimary]}>
-                  <Pressable
-                    style={[styles.sizeChip, variant.isPrimary && styles.sizeChipPrimary]}
-                    onPress={() => setPrimary(variant.id)}
-                  >
-                    <Text style={[styles.sizeChipText, variant.isPrimary && styles.sizeChipTextPrimary]}>
-                      {variant.size || `${netWeight || '—'}`}
-                    </Text>
-                  </Pressable>
-                  <View style={styles.variantInputsColumn}>
-                    {isAttributeKind ? (
-                      <View style={styles.attributeChipsRow}>
-                        {attributeOptions.map(option => {
-                          const selected = variant.size === option;
-                          return (
-                            <Pressable
-                              key={option}
-                              style={[styles.attributeChip, selected && styles.attributeChipSelected]}
-                              onPress={() => updateVariant(variant.id, { size: option })}
-                            >
-                              <Text
-                                style={[styles.attributeChipText, selected && styles.attributeChipTextSelected]}
-                              >
-                                {option}
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                        {variantErrors[variant.id]?.size ? (
-                          <Text style={styles.errorText}>Select a {variantLabel.toLowerCase()}</Text>
-                        ) : null}
-                      </View>
-                    ) : null}
-                    <View style={styles.variantInputsRow}>
-                      {isAttributeKind ? null : (
-                        <VariantMiniInput
-                          placeholder="Size"
-                          value={variant.size}
-                          onChangeText={text => updateVariant(variant.id, { size: text })}
-                          error={variantErrors[variant.id]?.size}
-                        />
-                      )}
-                      <VariantMiniInput
-                        placeholder="MRP"
-                        value={variant.mrp}
-                        onChangeText={text => updateVariant(variant.id, { mrp: text })}
-                        keyboardType="numeric"
-                        error={variantErrors[variant.id]?.mrp}
-                      />
-                      <VariantMiniInput
-                        placeholder="SP"
-                        value={variant.sellingPrice}
-                        onChangeText={text => updateVariant(variant.id, { sellingPrice: text })}
-                        keyboardType="numeric"
-                        error={variantErrors[variant.id]?.sellingPrice}
-                      />
-                      <VariantMiniInput
-                        placeholder="Stock"
-                        value={variant.stock}
-                        onChangeText={text => updateVariant(variant.id, { stock: text })}
-                        keyboardType="numeric"
-                        error={variantErrors[variant.id]?.stock}
-                      />
-                    </View>
-                  </View>
-                  {variant.isPrimary ? <Text style={styles.primaryLabel}>Primary</Text> : null}
-                  <Pressable onPress={() => removeVariant(variant.id)} hitSlop={8}>
-                    <Icon name="trash" size={14} color={colors.error} />
-                  </Pressable>
-                </View>
-              ))}
-              <Pressable style={styles.addVariantButton} onPress={addVariant}>
-                <Icon name="plus" size={14} color={colors.textSecondary} />
-                <Text style={styles.addVariantText}>
-                  {isAttributeKind ? `Add another ${variantLabel.toLowerCase()}` : 'Add another size'}
-                </Text>
-              </Pressable>
+        {isSingleItem ? null : (
+          <View style={styles.card}>
+            <View style={styles.variantsHeaderRow}>
+              <Text style={styles.cardTitle}>{isAttributeKind ? variantLabel : 'Variants (Optional)'}</Text>
+              {isAttributeKind ? null : <Switch value={variantsEnabled} onChange={setVariantsEnabled} />}
             </View>
-          ) : null}
-        </View>
+            <Text style={styles.variantsSubtitle}>
+              {isAttributeKind
+                ? `Add each ${variantLabel.toLowerCase()} this product is available in`
+                : 'Sell multiple sizes of this product. Each size gets its own MRP, selling price and stock.'}
+            </Text>
+            {variantsError ? <Text style={styles.errorText}>{variantsError}</Text> : null}
+
+            {variantsEnabled || isAttributeKind ? (
+              <View style={styles.variantsList}>
+                {variants.map(variant => {
+                  const isCustom = customVariantIds.includes(variant.id);
+                  return (
+                    <View key={variant.id} style={[styles.variantRow, variant.isPrimary && styles.variantRowPrimary]}>
+                      <Pressable
+                        style={[styles.sizeChip, variant.isPrimary && styles.sizeChipPrimary]}
+                        onPress={() => setPrimary(variant.id)}
+                      >
+                        <Text style={[styles.sizeChipText, variant.isPrimary && styles.sizeChipTextPrimary]}>
+                          {variant.size || '—'}
+                        </Text>
+                      </Pressable>
+                      <View style={styles.variantInputsColumn}>
+                        {isAttributeKind ? (
+                          <View style={styles.attributeChipsRow}>
+                            {attributeOptions.map(option => {
+                              const selected = !isCustom && variant.size === option;
+                              return (
+                                <Pressable
+                                  key={option}
+                                  style={[styles.attributeChip, selected && styles.attributeChipSelected]}
+                                  onPress={() => selectOption(variant.id, option)}
+                                >
+                                  <Text
+                                    style={[styles.attributeChipText, selected && styles.attributeChipTextSelected]}
+                                  >
+                                    {option}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                            {allowCustom && attributeOptions.length > 0 ? (
+                              <Pressable
+                                style={[styles.attributeChip, isCustom && styles.attributeChipSelected]}
+                                onPress={() => selectCustomOption(variant.id)}
+                              >
+                                <Text style={[styles.attributeChipText, isCustom && styles.attributeChipTextSelected]}>
+                                  {OTHER_OPTION}
+                                </Text>
+                              </Pressable>
+                            ) : null}
+                            {variantErrors[variant.id]?.size && !isCustom ? (
+                              <Text style={styles.errorText}>Select a {variantLabel.toLowerCase()}</Text>
+                            ) : null}
+                          </View>
+                        ) : null}
+                        {isAttributeKind && isCustom ? (
+                          <Input
+                            value={variant.size}
+                            onChangeText={text => updateVariant(variant.id, { size: text })}
+                            placeholder={`Enter ${variantLabel.toLowerCase()}`}
+                            error={variantErrors[variant.id]?.size}
+                          />
+                        ) : null}
+                        <View style={styles.variantInputsRow}>
+                          {isAttributeKind ? null : (
+                            <VariantMiniInput
+                              placeholder="Size"
+                              value={variant.size}
+                              onChangeText={text => updateVariant(variant.id, { size: text })}
+                              error={variantErrors[variant.id]?.size}
+                            />
+                          )}
+                          <VariantMiniInput
+                            placeholder="MRP"
+                            value={variant.mrp}
+                            onChangeText={text => updateVariant(variant.id, { mrp: text })}
+                            keyboardType="numeric"
+                            error={variantErrors[variant.id]?.mrp}
+                          />
+                          <VariantMiniInput
+                            placeholder="SP"
+                            value={variant.sellingPrice}
+                            onChangeText={text => updateVariant(variant.id, { sellingPrice: text })}
+                            keyboardType="numeric"
+                            error={variantErrors[variant.id]?.sellingPrice}
+                          />
+                          <VariantMiniInput
+                            placeholder="Stock"
+                            value={variant.stock}
+                            onChangeText={text => updateVariant(variant.id, { stock: text })}
+                            keyboardType="numeric"
+                            error={variantErrors[variant.id]?.stock}
+                          />
+                        </View>
+                      </View>
+                      {variant.isPrimary ? <Text style={styles.primaryLabel}>Primary</Text> : null}
+                      <Pressable onPress={() => removeVariant(variant.id)} hitSlop={8}>
+                        <Icon name="trash" size={14} color={colors.error} />
+                      </Pressable>
+                    </View>
+                  );
+                })}
+                <Pressable style={styles.addVariantButton} onPress={addVariant}>
+                  <Icon name="plus" size={14} color={colors.textSecondary} />
+                  <Text style={styles.addVariantText}>
+                    {isAttributeKind ? `Add another ${variantLabel.toLowerCase()}` : 'Add another size'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+        )}
 
         <View style={styles.footer}>
           <Button label="Continue" onPress={handleContinue} />
@@ -419,6 +531,14 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
+    backgroundColor: colors.white,
+  },
+  typeChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     backgroundColor: colors.white,
   },
   attributeChipSelected: {

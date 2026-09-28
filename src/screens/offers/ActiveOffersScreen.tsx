@@ -1,13 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useMemo } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { Badge } from '../../components';
 import { Offer, useOffers } from '../../context/OffersContext';
-import { offerTypeLabel } from './OfferCard';
-import { OfferActionsSheet } from './OfferActionsSheet';
+import { OffersListLayout, offersForTab, useOfferActions } from './OffersListLayout';
+import { formatINR, formatOfferDate, offerTypeLabel } from './offerFormat';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ActiveOffers'>;
@@ -20,108 +19,57 @@ const CARD_BORDER_ACTIVE = '#A6F4C5';
 const PAUSE_BORDER = '#FDE68A';
 
 export function ActiveOffersScreen({ navigation }: Props) {
-  const { offers, pauseOffer } = useOffers();
-  const [menuOffer, setMenuOffer] = useState<Offer | null>(null);
-
-  const counts = useMemo(() => {
-    const result = { active: 0, scheduled: 0, expired: 0 };
-    offers.forEach(offer => {
-      if (offer.status === 'active') result.active += 1;
-      else if (offer.status === 'scheduled') result.scheduled += 1;
-      else if (offer.status === 'expired') result.expired += 1;
-    });
-    return result;
-  }, [offers]);
-
-  const activeOffers = useMemo(() => offers.filter(offer => offer.status === 'active'), [offers]);
-
-  const tabs = [
-    { key: 'all', label: `All (${offers.length})`, active: false, onPress: () => navigation.navigate('OffersOverview') },
-    { key: 'active', label: `Active (${counts.active})`, active: true, onPress: () => {} },
-    { key: 'scheduled', label: `Scheduled (${counts.scheduled})`, active: false, onPress: () => navigation.navigate('ScheduledOffers') },
-    { key: 'expired', label: `Expired (${counts.expired})`, active: false, onPress: () => navigation.navigate('ExpiredOffers') },
-  ];
+  const { offers } = useOffers();
+  const { openMenu, sheet, editOffer, togglePause, isOfferPending } = useOfferActions();
+  const activeOffers = useMemo(() => offersForTab(offers, 'active'), [offers]);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Offers & Promotions</Text>
-        <Pressable style={styles.createButton} onPress={() => navigation.navigate('CreateOffer', {})}>
-          <Icon name="plus" size={16} color={colors.white} />
-          <Text style={styles.createButtonText}>Create Offer</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.tabRow}>
-          {tabs.map(tab => (
-            <Pressable
-              key={tab.key}
-              style={[styles.tabPill, tab.active && styles.tabPillActive]}
-              onPress={tab.onPress}
-            >
-              <Text style={[styles.tabLabel, tab.active && styles.tabLabelActive]}>{tab.label}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <View style={styles.list}>
-          {activeOffers.length === 0 ? (
-            <Text style={styles.emptyText}>No active offers right now.</Text>
-          ) : (
-            activeOffers.map(offer => (
-              <ActiveOfferCard
-                key={offer.id}
-                offer={offer}
-                onMenuPress={() => setMenuOffer(offer)}
-                onPause={() => pauseOffer(offer.id)}
-                onEdit={() => navigation.navigate('CreateOffer', { offerId: offer.id })}
-              />
-            ))
-          )}
-
-          {activeOffers.length === 1 ? (
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>No other active offers</Text>
-              <View style={styles.dividerLine} />
-            </View>
-          ) : null}
-        </View>
-      </ScrollView>
-
-      <OfferActionsSheet
-        visible={!!menuOffer}
-        offer={menuOffer}
-        onClose={() => setMenuOffer(null)}
-        onEdit={() => menuOffer && navigation.navigate('CreateOffer', { offerId: menuOffer.id })}
-        onPauseResume={() => menuOffer && navigation.navigate('PauseOffer', { offerId: menuOffer.id })}
-        onDelete={() => menuOffer && navigation.navigate('DeleteOffer', { offerId: menuOffer.id })}
-      />
-    </SafeAreaView>
+    <OffersListLayout
+      activeTab="active"
+      itemCount={activeOffers.length}
+      emptyText="No active offers right now."
+      overlay={sheet}
+    >
+      {activeOffers.map(offer => (
+        <ActiveOfferCard
+          key={offer.id}
+          offer={offer}
+          pending={isOfferPending(offer.id)}
+          onPress={() => navigation.navigate('OfferDetail', { offerId: offer.id })}
+          onMenuPress={() => openMenu(offer)}
+          onPauseResume={() => togglePause(offer)}
+          onEdit={() => editOffer(offer)}
+        />
+      ))}
+    </OffersListLayout>
   );
 }
 
 type ActiveOfferCardProps = {
   offer: Offer;
+  pending: boolean;
+  onPress: () => void;
   onMenuPress: () => void;
-  onPause: () => void;
+  onPauseResume: () => void;
   onEdit: () => void;
 };
 
-function ActiveOfferCard({ offer, onMenuPress, onPause, onEdit }: ActiveOfferCardProps) {
+function ActiveOfferCard({ offer, pending, onPress, onMenuPress, onPauseResume, onEdit }: ActiveOfferCardProps) {
+  const paused = offer.status === 'paused';
+  const avgRevenue = offer.usesCount > 0 ? offer.revenueGenerated / offer.usesCount : 0;
+
   return (
-    <View style={styles.card}>
+    <Pressable style={styles.card} onPress={onPress}>
       <View style={styles.cardTopRow}>
         <View style={styles.cardTextColumn}>
           <Text style={styles.cardTitle} numberOfLines={1}>
-            {offer.name}
+            {offer.title}
           </Text>
           <View style={styles.badgeRow}>
             <View style={styles.typeBadge}>
               <Text style={styles.typeBadgeText}>{offerTypeLabel(offer)}</Text>
             </View>
-            <Badge label="Active" tone="success" />
+            <Badge label={paused ? 'Paused' : 'Active'} tone={paused ? 'warning' : 'success'} />
           </View>
         </View>
         <Pressable onPress={onMenuPress} hitSlop={8} style={styles.menuButton}>
@@ -131,105 +79,45 @@ function ActiveOfferCard({ offer, onMenuPress, onPause, onEdit }: ActiveOfferCar
 
       <View style={styles.statGrid}>
         <View style={styles.statTile}>
-          <Text style={styles.statTileValue}>{offer.usesToday ?? 0}</Text>
-          <Text style={styles.statTileLabel}>Uses today</Text>
+          <Text style={styles.statTileValue}>{offer.usesCount.toLocaleString('en-IN')}</Text>
+          <Text style={styles.statTileLabel}>Total uses</Text>
         </View>
         <View style={styles.statTile}>
-          <Text style={styles.statTileValue}>₹{(offer.revenueToday ?? 0).toLocaleString('en-IN')}</Text>
-          <Text style={styles.statTileLabel}>Revenue today</Text>
+          <Text style={styles.statTileValue}>{formatINR(offer.revenueGenerated)}</Text>
+          <Text style={styles.statTileLabel}>Revenue</Text>
         </View>
         <View style={styles.statTile}>
-          <Text style={styles.statTileValue}>₹{(offer.avgOrderValue ?? 0).toLocaleString('en-IN')}</Text>
-          <Text style={styles.statTileLabel}>Avg order value</Text>
+          <Text style={styles.statTileValue}>{formatINR(avgRevenue)}</Text>
+          <Text style={styles.statTileLabel}>Avg per use</Text>
         </View>
       </View>
 
+      <View style={styles.endsRow}>
+        <Icon name="calendar" size={14} color={colors.textSecondary} />
+        <Text style={styles.endsText}>Ends {formatOfferDate(offer.endDate)}</Text>
+      </View>
+
       <View style={styles.footerRow}>
-        <Pressable style={styles.pauseButton} onPress={onPause}>
-          <Text style={styles.pauseButtonText}>Pause</Text>
+        <Pressable
+          style={[styles.pauseButton, pending && styles.buttonDisabled]}
+          onPress={onPauseResume}
+          disabled={pending}
+        >
+          {pending ? (
+            <ActivityIndicator color={colors.warningDark} />
+          ) : (
+            <Text style={styles.pauseButtonText}>{paused ? 'Resume' : 'Pause'}</Text>
+          )}
         </Pressable>
-        <Pressable style={styles.editButton} onPress={onEdit}>
+        <Pressable style={[styles.editButton, pending && styles.buttonDisabled]} onPress={onEdit} disabled={pending}>
           <Text style={styles.editButtonText}>Edit</Text>
         </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.white,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.xxl,
-    paddingVertical: spacing.lg,
-  },
-  headerTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 18,
-    lineHeight: 27,
-    color: colors.textPrimary,
-  },
-  createButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: spacing.md,
-    borderRadius: radii.md,
-  },
-  createButtonText: {
-    ...typography.labelSemibold,
-    color: colors.white,
-  },
-  content: {
-    paddingHorizontal: spacing.xxl,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xxxl,
-  },
-  tabRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  tabPill: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  tabPillActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  tabLabel: {
-    ...typography.label,
-    color: colors.textSecondary,
-  },
-  tabLabelActive: {
-    ...typography.labelSemibold,
-    color: colors.white,
-  },
-  list: {
-    marginTop: spacing.xl,
-    gap: spacing.lg,
-  },
-  emptyText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingVertical: spacing.huge,
-  },
   card: {
     backgroundColor: colors.white,
     borderWidth: 1.5,
@@ -334,18 +222,16 @@ const styles = StyleSheet.create({
     ...typography.bodySemibold,
     color: colors.primary,
   },
-  dividerRow: {
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  endsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.lg,
+    gap: 4,
+    marginTop: spacing.md,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
+  endsText: {
     ...typography.caption,
     color: colors.textSecondary,
   },

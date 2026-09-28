@@ -9,17 +9,21 @@ import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductSearch'>;
 
-const INITIAL_RECENT = ['Tata Salt', 'Amul Milk', 'Fortune Oil', 'Maggi'];
-
 export function ProductSearchScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
   const [query, setQuery] = useState('');
-  const [recent, setRecent] = useState(INITIAL_RECENT);
+  const [recent, setRecent] = useState<string[]>([]);
 
   const suggestions = useMemo(() => {
     if (!query.trim()) return [];
     const lower = query.trim().toLowerCase();
-    return products.filter(product => product.name.toLowerCase().includes(lower)).slice(0, 6);
+    return products
+      .filter(product =>
+        [product.name, product.brand, product.sku, product.barcode ?? ''].some(field =>
+          field.toLowerCase().includes(lower),
+        ),
+      )
+      .slice(0, 20);
   }, [products, query]);
 
   function commitSearch(text: string) {
@@ -87,10 +91,13 @@ export function ProductSearchScreen({ navigation }: Props) {
           <FlatList
             data={recent}
             keyExtractor={item => item}
+            ListEmptyComponent={<Text style={styles.emptyText}>Search by product name, brand, SKU or barcode</Text>}
             renderItem={({ item }) => (
               <View style={styles.recentRow}>
                 <Icon name="clock" size={14} color={colors.textSecondary} />
-                <Text style={styles.recentText}>{item}</Text>
+                <Text style={styles.recentText} onPress={() => setQuery(item)}>
+                  {item}
+                </Text>
                 <Pressable
                   onPress={() => setRecent(prev => prev.filter(entry => entry !== item))}
                   hitSlop={8}

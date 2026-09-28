@@ -12,7 +12,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'StoreSetupIntro'>;
 const CHECKLIST: { icon: IconName; title: string; subtitle: string }[] = [
   { icon: 'home', title: 'Store Profile', subtitle: 'Name, description & category' },
   { icon: 'image', title: 'Store Branding', subtitle: 'Logo & cover image' },
-  { icon: 'pin', title: 'Store Address', subtitle: 'Location & GPS pin' },
+  { icon: 'pin', title: 'Store Address', subtitle: 'Address & coordinates' },
   { icon: 'clock', title: 'Operating Hours', subtitle: 'Schedule & holidays' },
   { icon: 'truck', title: 'Delivery Settings', subtitle: 'Fulfillment & charges' },
   { icon: 'globe', title: 'Service Area', subtitle: 'Coverage & availability' },
@@ -37,9 +37,7 @@ export function StoreSetupIntroScreen({ navigation }: Props) {
           Complete your store profile to start receiving orders on Verdant
         </Text>
         <View style={styles.statsRow}>
-          <Stat value="7" label="Steps" />
-          <Stat value="~10" label="Minutes" />
-          <Stat value="100%" label="Free" />
+          <Stat value={String(CHECKLIST.length)} label="Steps" />
         </View>
       </View>
 
@@ -66,18 +64,13 @@ export function StoreSetupIntroScreen({ navigation }: Props) {
         <View style={styles.infoBanner}>
           <Icon name="info" size={14} color={colors.primaryDark} />
           <Text style={styles.infoText}>
-            You can save progress and return anytime. Your store won't go live until you click
-            "Publish".
+            Each step is saved as you go, so you can return anytime. Your store can't take orders
+            until every step is complete.
           </Text>
         </View>
 
         <View style={styles.footer}>
           <Button label="Start Store Setup" onPress={() => navigation.navigate('StoreProfile')} />
-          <Button
-            label="I'll do this later"
-            variant="text"
-            onPress={() => navigation.replace('Dashboard')}
-          />
         </View>
       </View>
     </ScreenContainer>

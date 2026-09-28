@@ -1,19 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Image, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { useVendorAuth } from '../../context/VendorAuthContext';
 import { resolveVendorEntryRoute } from '../../utils/vendorRouting';
 import { colors, spacing, typography } from '../../theme';
+import { version as appVersion } from '../../../package.json';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Splash'>;
 
 const MIN_VISIBLE_MS = 2200;
 
 export function SplashScreen({ navigation }: Props) {
-  const { isLoading, isAuthenticated } = useVendorAuth();
+  const { isLoading, isAuthenticated, restoreFailed, retryRestore } = useVendorAuth();
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
+  const [routeFailed, setRouteFailed] = useState(false);
   const navigated = useRef(false);
 
   // Shows the splash for a fixed minimum duration regardless of how fast the
@@ -31,6 +33,9 @@ export function SplashScreen({ navigation }: Props) {
   // blips without dropping a valid session) before deciding where to go.
   useEffect(() => {
     if (isLoading || !minTimeElapsed || navigated.current) return;
+    // A stored session that couldn't be validated over the network keeps its tokens
+    // and shows a retry instead of silently dropping to Welcome.
+    if (restoreFailed || routeFailed) return;
     navigated.current = true;
 
     if (!isAuthenticated) {
@@ -46,11 +51,17 @@ export function SplashScreen({ navigation }: Props) {
         );
       })
       .catch(() => {
-        // Couldn't reach the server to resolve the exact step — fall back to
-        // Welcome rather than guessing; the vendor can log in again from there.
-        navigation.replace('Welcome');
+        navigated.current = false;
+        setRouteFailed(true);
       });
-  }, [isLoading, minTimeElapsed, isAuthenticated, navigation]);
+  }, [isLoading, minTimeElapsed, isAuthenticated, restoreFailed, routeFailed, navigation]);
+
+  const showRetry = !isLoading && minTimeElapsed && (restoreFailed || routeFailed);
+
+  function handleRetry() {
+    setRouteFailed(false);
+    retryRestore().catch(() => undefined);
+  }
 
   return (
     <View style={styles.root}>
@@ -73,12 +84,21 @@ export function SplashScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.footer}>
-          <View style={styles.dots}>
-            <View style={styles.dot} />
-            <View style={[styles.dot, styles.dotActive]} />
-            <View style={styles.dot} />
-          </View>
-          <Text style={styles.version}>Version 2.4.1</Text>
+          {showRetry ? (
+            <View style={styles.retryBlock}>
+              <Text style={styles.retryText}>Couldn't reach the server. Check your connection.</Text>
+              <Pressable style={styles.retryButton} onPress={handleRetry}>
+                <Text style={styles.retryLabel}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.dots}>
+              <View style={styles.dot} />
+              <View style={[styles.dot, styles.dotActive]} />
+              <View style={styles.dot} />
+            </View>
+          )}
+          <Text style={styles.version}>Version {appVersion}</Text>
         </View>
       </SafeAreaView>
     </View>
@@ -163,6 +183,26 @@ const styles = StyleSheet.create({
   dotActive: {
     width: 20,
     backgroundColor: colors.white,
+  },
+  retryBlock: {
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.xl,
+  },
+  retryText: {
+    ...typography.caption,
+    color: colors.overlayLight,
+    textAlign: 'center',
+  },
+  retryButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    borderRadius: 9999,
+    backgroundColor: colors.white,
+  },
+  retryLabel: {
+    ...typography.bodyMedium,
+    color: colors.primary,
   },
   version: {
     ...typography.tiny,

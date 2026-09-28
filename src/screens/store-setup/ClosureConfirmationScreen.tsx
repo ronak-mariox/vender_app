@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, IconCircle, InfoBanner, NavHeader, ScreenContainer } from '../../components';
+import { Button, IconCircle, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useStoreSetup } from '../../context/StoreSetupContext';
+import { useOrders } from '../../context/OrdersContext';
+import { parseShortDate } from './storeSetupHelpers';
 import { api, getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -13,6 +15,12 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'ClosureConfirmation'>;
 export function ClosureConfirmationScreen({ navigation }: Props) {
   const { data, setStoreStatus } = useStoreSetup();
   const closure = data.tempClosure;
+  const { ordersByStatus } = useOrders();
+  const activeOrders = ordersByStatus(['placed', 'accepted', 'preparing', 'ready_for_pickup']).length;
+  const from = closure ? parseShortDate(closure.fromDate) : null;
+  const to = closure ? parseShortDate(closure.toDate) : null;
+  const durationDays =
+    from && to ? Math.round((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)) + 1 : null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -26,7 +34,7 @@ export function ClosureConfirmationScreen({ navigation }: Props) {
     try {
       await api.patch('/vendor/store-setup/temp-closure', closure);
       setStoreStatus('temporarily-closed');
-      navigation.navigate('StoreStatus');
+      navigation.popTo('StoreStatus');
     } catch (err) {
       setError(getApiErrorMessage(err));
     } finally {
@@ -55,7 +63,10 @@ export function ClosureConfirmationScreen({ navigation }: Props) {
           <SummaryRow label="Reason" value={closure?.reason ?? '—'} />
           <SummaryRow label="Closure Start" value={`${closure?.fromDate ?? '—'}, ${closure?.closeFromTime ?? ''}`} />
           <SummaryRow label="Reopening At" value={`${closure?.toDate ?? '—'}, ${closure?.reopenAt ?? ''}`} />
-          <SummaryRow label="Duration" value="2 days" />
+          <SummaryRow
+            label="Duration"
+            value={durationDays ? `${durationDays} day${durationDays > 1 ? 's' : ''}` : '—'}
+          />
           <SummaryRow label="Customer Message" value={closure?.customMessage ?? '—'} last />
         </View>
 
@@ -68,28 +79,15 @@ export function ClosureConfirmationScreen({ navigation }: Props) {
             <Icon name="package" size={18} color={colors.error} />
             <View style={styles.impactTextColumn}>
               <View style={styles.impactRowHeader}>
-                <Text style={styles.impactLabel}>Pending orders</Text>
-                <Text style={styles.impactValue}>3 orders</Text>
+                <Text style={styles.impactLabel}>Orders in progress</Text>
+                <Text style={styles.impactValue}>
+                  {activeOrders} order{activeOrders === 1 ? '' : 's'}
+                </Text>
               </View>
-              <Text style={styles.impactNote}>Must be fulfilled before closure</Text>
-            </View>
-          </View>
-          <View style={[styles.impactRow, styles.impactRowDivider]}>
-            <Icon name="package" size={18} color={colors.error} />
-            <View style={styles.impactTextColumn}>
-              <View style={styles.impactRowHeader}>
-                <Text style={styles.impactLabel}>Active carts</Text>
-                <Text style={styles.impactValue}>12 carts</Text>
-              </View>
-              <Text style={styles.impactNote}>Customers will be notified</Text>
+              <Text style={styles.impactNote}>These must still be fulfilled</Text>
             </View>
           </View>
         </View>
-
-        <InfoBanner
-          variant="success"
-          message="Push notifications will be sent to customers with active carts once you confirm closure."
-        />
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -189,10 +187,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     paddingVertical: spacing.md,
-  },
-  impactRowDivider: {
-    borderTopWidth: 1,
-    borderTopColor: colors.errorBorder,
   },
   impactTextColumn: {
     flex: 1,

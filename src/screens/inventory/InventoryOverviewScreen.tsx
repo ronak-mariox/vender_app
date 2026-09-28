@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -9,13 +9,28 @@ import { useInventory } from '../../context/InventoryContext';
 import { inventoryCategory } from '../../utils/inventory';
 import { formatCurrencyCompact } from '../../utils/format';
 import { formatTimeAgo } from '../../utils/time';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'InventoryOverview'>;
 
 export function InventoryOverviewScreen({ navigation }: Props) {
-  const { products } = useProductCatalog();
-  const { events } = useInventory();
+  const { products, refreshProducts, loading, error } = useProductCatalog();
+  const { events, refreshEvents } = useInventory();
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await Promise.all([refreshProducts(), refreshEvents()]);
+      setLastSyncedAt(Date.now());
+    } catch (err) {
+      Alert.alert('Could not refresh inventory', getApiErrorMessage(err));
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const counts = useMemo(() => {
     const result = { 'in-stock': 0, 'low-stock': 0, 'out-of-stock': 0, unavailable: 0 };
@@ -26,7 +41,13 @@ export function InventoryOverviewScreen({ navigation }: Props) {
   }, [products]);
 
   const totalStockValue = useMemo(
-    () => products.reduce((sum, product) => sum + product.sellingPrice * product.stock, 0),
+    () =>
+      products.reduce(
+        (sum, product) =>
+          sum +
+          (product.variants ?? []).reduce((variantSum, variant) => variantSum + variant.sellingPrice * variant.stock, 0),
+        0,
+      ),
     [products],
   );
 
@@ -66,7 +87,7 @@ export function InventoryOverviewScreen({ navigation }: Props) {
       iconBg: colors.errorSurface,
       value: String(counts['out-of-stock']),
       label: 'Out of Stock',
-      meta: 'unavailable to customers',
+      meta: "can't be ordered",
       onPress: () => navigation.navigate('OutOfStock'),
     },
     {
@@ -101,13 +122,20 @@ export function InventoryOverviewScreen({ navigation }: Props) {
       <View style={styles.header}>
         <View style={styles.headerTextColumn}>
           <Text style={styles.headerTitle}>Inventory</Text>
-          <Text style={styles.headerSubtitle}>Last synced: just now</Text>
+          <Text style={styles.headerSubtitle}>
+            {error
+              ? 'Could not load latest stock'
+              : lastSyncedAt
+              ? `Last synced: ${formatTimeAgo(lastSyncedAt)}`
+              : `${products.length} products`}
+          </Text>
         </View>
-        <Pressable
-          style={styles.iconButton}
-          onPress={() => Alert.alert('Synced', 'Inventory is up to date.')}
-        >
-          <Icon name="refresh-cw" size={15} color={colors.textPrimary} />
+        <Pressable style={styles.iconButton} onPress={handleRefresh} disabled={refreshing}>
+          {refreshing ? (
+            <ActivityIndicator size="small" color={colors.textPrimary} />
+          ) : (
+            <Icon name="refresh-cw" size={15} color={colors.textPrimary} />
+          )}
         </Pressable>
         <Pressable
           style={[styles.iconButton, styles.addButton]}
@@ -117,7 +145,10 @@ export function InventoryOverviewScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing || (loading && products.length === 0)} onRefresh={handleRefresh} />}
+      >
         <View style={styles.grid}>
           {statCards.map(card => (
             <Pressable key={card.key} style={styles.statCard} onPress={card.onPress}>

@@ -1,11 +1,12 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Icon } from '../icons/Icon';
 import { colors, radii, spacing, typography } from '../theme';
+import { ProductThumb } from './ProductThumb';
 
 type Props = {
   name: string;
   sku: string;
+  imageUrl?: string;
   onPress: () => void;
   right: React.ReactNode;
   muted?: boolean;
@@ -14,7 +15,7 @@ type Props = {
   subtitle?: React.ReactNode;
 };
 
-export function InventoryRow({ name, sku, onPress, right, muted, bordered, borderColor, subtitle }: Props) {
+export function InventoryRow({ name, sku, imageUrl, onPress, right, muted, bordered, borderColor, subtitle }: Props) {
   return (
     <Pressable
       onPress={onPress}
@@ -23,9 +24,12 @@ export function InventoryRow({ name, sku, onPress, right, muted, bordered, borde
         bordered && [styles.rowBordered, { borderColor: borderColor ?? colors.border }],
       ]}
     >
-      <View style={[styles.thumb, muted && styles.thumbMuted]}>
-        <Icon name="package" size={muted ? 18 : 22} color={colors.textTertiary} />
-      </View>
+      <ProductThumb
+        imageUrl={imageUrl}
+        style={[styles.thumb, muted && styles.thumbMuted]}
+        iconSize={muted ? 18 : 22}
+        iconColor={colors.textTertiary}
+      />
       <View style={styles.textColumn}>
         <Text style={[styles.name, muted && styles.nameMuted]} numberOfLines={1}>
           {name}

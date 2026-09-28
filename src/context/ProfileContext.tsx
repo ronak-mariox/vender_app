@@ -1,11 +1,16 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api } from '../services/api';
+import { useFocusEffect } from '@react-navigation/native';
+import { api, getApiErrorMessage, unwrapList } from '../services/api';
+import { useVendorAuth } from './VendorAuthContext';
+import { launchImageLibrary } from 'react-native-image-picker';
 import { pickAndUploadLogo, pickAndUploadCoverImage } from '../services/storeSetupUpload';
 
 export type VendorStats = {
   orders: number;
   revenue: number;
-  rating: number;
+  /** Average customer rating — null until at least one order has been rated. */
+  rating: number | null;
+  ratingCount: number;
 };
 
 export type VendorInfo = {
@@ -50,7 +55,10 @@ export type ProfileCore = {
   storeName: string;
   vendorCode: string;
   avatarInitials: string;
+  avatarUrl: string;
+  /** Raw backend account status: pending | active | suspended | rejected. */
   status: string;
+  kycStatus: string;
   kycVerified: boolean;
   stats: VendorStats;
   vendor: VendorInfo;
@@ -172,6 +180,7 @@ interface RawPendingBankDetails {
 
 interface RawVendor {
   phone: string;
+  avatarUrl?: string;
   email?: string;
   fullName?: string;
   status: string;
@@ -224,9 +233,10 @@ interface RawVendor {
     primaryCategory?: string;
     subCategory?: string;
     tags?: string[];
-    minimumOrderValue?: number;
-    avgPrepTime?: number;
+    minimumOrderValue?: number | string;
+    avgPrepTime?: number | string;
   };
+  storeSetupAddress?: { contactNumber?: string };
   storeLogoUrl?: string;
   storeCoverImageUrl?: string;
   additionalDocuments?: RawAdditionalDocument[];
@@ -238,6 +248,7 @@ interface RawStats {
   orders: number;
   revenue: number;
   rating: number | null;
+  ratingCount?: number;
 }
 
 interface RawAddress {
@@ -275,6 +286,12 @@ function formatAddress(info?: RawVendor['businessInfo']): string {
   return [info.addressLine1, info.addressLine2, info.city, info.state, info.pincode].filter(Boolean).join(', ');
 }
 
+function toNumberOrNull(value: number | string | undefined): number | null {
+  if (value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function formatOnboardedLabel(iso?: string): string {
   if (!iso) return '—';
   const date = new Date(iso);
@@ -287,9 +304,16 @@ function toProfileCore(vendor: RawVendor, stats: RawStats): ProfileCore {
     storeName: vendor.storeProfile?.storeName || vendor.businessInfo?.legalName || vendor.fullName || 'Your Store',
     vendorCode: vendor.referenceId ?? '—',
     avatarInitials: initialsOf(vendor.ownerInfo?.fullName || vendor.fullName),
-    status: vendor.status.charAt(0).toUpperCase() + vendor.status.slice(1),
+    avatarUrl: vendor.avatarUrl ?? '',
+    status: vendor.status,
+    kycStatus: vendor.kycStatus,
     kycVerified: vendor.kycStatus === 'verified',
-    stats: { orders: stats.orders, revenue: stats.revenue, rating: stats.rating ?? 0 },
+    stats: {
+      orders: stats.orders,
+      revenue: stats.revenue,
+      rating: stats.rating ?? null,
+      ratingCount: stats.ratingCount ?? 0,
+    },
     vendor: {
       businessType: vendor.businessType ?? '',
       legalName: vendor.businessInfo?.legalName ?? '',
@@ -319,9 +343,9 @@ function toProfileCore(vendor: RawVendor, stats: RawStats): ProfileCore {
       description: vendor.storeProfile?.description ?? '',
       storeCode: vendor.referenceId ?? '—',
       onboardedLabel: formatOnboardedLabel(vendor.createdAt),
-      contactNumber: vendor.storeInfo?.contactNumber ?? '',
-      minimumOrderValue: vendor.storeProfile?.minimumOrderValue ?? null,
-      avgPrepTime: vendor.storeProfile?.avgPrepTime ?? null,
+      contactNumber: vendor.storeSetupAddress?.contactNumber || vendor.storeInfo?.contactNumber || '',
+      minimumOrderValue: toNumberOrNull(vendor.storeProfile?.minimumOrderValue),
+      avgPrepTime: toNumberOrNull(vendor.storeProfile?.avgPrepTime),
       logoUrl: vendor.storeLogoUrl ?? '',
       coverImageUrl: vendor.storeCoverImageUrl ?? '',
     },
@@ -423,9 +447,11 @@ const EMPTY_PROFILE: ProfileCore = {
   storeName: '',
   vendorCode: '—',
   avatarInitials: '—',
+  avatarUrl: '',
   status: '',
+  kycStatus: '',
   kycVerified: false,
-  stats: { orders: 0, revenue: 0, rating: 0 },
+  stats: { orders: 0, revenue: 0, rating: null, ratingCount: 0 },
   vendor: {
     businessType: '',
     legalName: '',
@@ -468,13 +494,21 @@ const EMPTY_BANK: BankDetails = {
   upiId: '',
 };
 
+export type ProfileSection = 'vendor' | 'stats' | 'addresses' | 'prefs' | 'settlements';
+
 type ProfileContextValue = {
   isLoading: boolean;
+  /** Per-section load failures (keyed by section) so one failing GET doesn't blank the whole profile. */
+  errors: Partial<Record<ProfileSection, string>>;
   profile: ProfileCore;
-  updateVendorInfo: (value: Partial<VendorInfo>) => Promise<void>;
-  updateOwnerInfo: (value: Partial<OwnerInfo>) => Promise<void>;
+  updateVendorInfo: (
+    value: Partial<Pick<VendorInfo, 'addressLine1' | 'addressLine2' | 'city' | 'state' | 'pincode'>>,
+  ) => Promise<void>;
+  updateOwnerInfo: (value: Partial<Pick<OwnerInfo, 'name' | 'phone' | 'email'>>) => Promise<void>;
   updateStoreInfo: (value: Partial<StoreInfo>) => Promise<void>;
-  updateProfileBasics: (value: { storeName?: string; avatarInitials?: string }) => Promise<void>;
+  updateProfileBasics: (value: { storeName?: string }) => Promise<void>;
+  /** Picks a photo and uploads it via POST /vendor/me/avatar; resolves false if the picker was cancelled. */
+  updateAvatar: () => Promise<boolean>;
   updateStoreLogo: (source: 'camera' | 'gallery') => Promise<void>;
   updateStoreCover: (source: 'camera' | 'gallery') => Promise<void>;
 
@@ -516,33 +550,84 @@ type ProfileContextValue = {
 const ProfileContext = createContext<ProfileContextValue | null>(null);
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
+  const { vendor: authVendor } = useVendorAuth();
+  const vendorId = authVendor?.id ?? null;
   const [vendor, setVendor] = useState<RawVendor | null>(null);
   const [stats, setStats] = useState<RawStats>({ orders: 0, revenue: 0, rating: null });
   const [rawAddresses, setRawAddresses] = useState<RawAddress[]>([]);
   const [rawSettlements, setRawSettlements] = useState<RawSettlement[]>([]);
   const [enabledPrefs, setEnabledPrefs] = useState<Record<string, boolean>>({});
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<ProfileSection, string>>>({});
 
   const refresh = useCallback(async () => {
-    const [vendorRes, statsRes, addressesRes, prefsRes, settlementsRes] = await Promise.all([
-      api.get<RawVendor>('/vendor/me'),
-      api.get<RawStats>('/vendor/me/stats'),
-      api.get<RawAddress[]>('/vendor/me/addresses'),
-      api.get<Record<string, boolean>>('/vendor/me/notification-prefs'),
-      api.get<RawSettlement[]>('/vendor/me/settlements'),
-    ]);
-    setVendor(vendorRes.data);
-    setStats(statsRes.data);
-    setRawAddresses(addressesRes.data);
-    setEnabledPrefs(prefsRes.data);
-    setRawSettlements(settlementsRes.data);
+    const sections: { key: ProfileSection; load: () => Promise<void> }[] = [
+      {
+        key: 'vendor',
+        load: async () => {
+          const { data } = await api.get<RawVendor>('/vendor/me');
+          setVendor(data);
+        },
+      },
+      {
+        key: 'stats',
+        load: async () => {
+          const { data } = await api.get<RawStats>('/vendor/me/stats');
+          setStats(data);
+        },
+      },
+      {
+        key: 'addresses',
+        load: async () => {
+          const { data } = await api.get('/vendor/me/addresses');
+          setRawAddresses(unwrapList<RawAddress>(data));
+        },
+      },
+      {
+        key: 'prefs',
+        load: async () => {
+          const { data } = await api.get<Record<string, boolean>>('/vendor/me/notification-prefs');
+          setEnabledPrefs(data ?? {});
+        },
+      },
+      {
+        key: 'settlements',
+        load: async () => {
+          const { data } = await api.get('/vendor/me/settlements');
+          setRawSettlements(unwrapList<RawSettlement>(data));
+        },
+      },
+    ];
+    const results = await Promise.allSettled(sections.map((section) => section.load()));
+    const nextErrors: Partial<Record<ProfileSection, string>> = {};
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') nextErrors[sections[index].key] = getApiErrorMessage(result.reason);
+    });
+    setErrors(nextErrors);
   }, []);
 
   useEffect(() => {
+    if (!vendorId) {
+      setVendor(null);
+      setStats({ orders: 0, revenue: 0, rating: null });
+      setRawAddresses([]);
+      setRawSettlements([]);
+      setEnabledPrefs({});
+      setErrors({});
+      setIsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoading(true);
     refresh()
       .catch(() => {})
-      .finally(() => setIsLoading(false));
-  }, [refresh]);
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId, refresh]);
 
   const profile = useMemo(() => (vendor ? toProfileCore(vendor, stats) : EMPTY_PROFILE), [vendor, stats]);
   const documents = useMemo(() => (vendor ? toDocuments(vendor) : []), [vendor]);
@@ -566,40 +651,32 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     [enabledPrefs],
   );
 
-  const updateVendorInfo = useCallback(async (value: Partial<VendorInfo>) => {
-    const businessInfo: Record<string, unknown> = {};
-    if (value.legalName !== undefined) businessInfo.legalName = value.legalName;
-    if (value.addressLine1 !== undefined) businessInfo.addressLine1 = value.addressLine1;
-    if (value.addressLine2 !== undefined) businessInfo.addressLine2 = value.addressLine2;
-    if (value.city !== undefined) businessInfo.city = value.city;
-    if (value.state !== undefined) businessInfo.state = value.state;
-    if (value.pincode !== undefined) businessInfo.pincode = value.pincode;
+  // Legal name, business type, GSTIN and PAN are verified identity fields the backend rejects on
+  // PATCH /vendor/me — only the registered address is editable here.
+  const updateVendorInfo = useCallback(
+    async (value: Partial<Pick<VendorInfo, 'addressLine1' | 'addressLine2' | 'city' | 'state' | 'pincode'>>) => {
+      const businessInfo: Record<string, unknown> = {};
+      if (value.addressLine1 !== undefined) businessInfo.addressLine1 = value.addressLine1;
+      if (value.addressLine2 !== undefined) businessInfo.addressLine2 = value.addressLine2;
+      if (value.city !== undefined) businessInfo.city = value.city;
+      if (value.state !== undefined) businessInfo.state = value.state;
+      if (value.pincode !== undefined) businessInfo.pincode = value.pincode;
+      if (Object.keys(businessInfo).length === 0) return;
 
-    const gstDetails: Record<string, unknown> = {};
-    if (value.gstNumber !== undefined) gstDetails.gstin = value.gstNumber;
+      const { data } = await api.patch<RawVendor>('/vendor/me', { businessInfo });
+      setVendor(data);
+    },
+    [],
+  );
 
-    const panDetails: Record<string, unknown> = {};
-    if (value.panNumber !== undefined) panDetails.panNumber = value.panNumber;
-
-    const { data } = await api.patch<RawVendor>('/vendor/me', {
-      ...(value.businessType !== undefined && { businessType: value.businessType }),
-      ...(Object.keys(businessInfo).length > 0 && { businessInfo }),
-      ...(Object.keys(gstDetails).length > 0 && { gstDetails }),
-      ...(Object.keys(panDetails).length > 0 && { panDetails }),
-    });
-    setVendor(data);
-  }, []);
-
-  const updateOwnerInfo = useCallback(async (value: Partial<OwnerInfo>) => {
+  const updateOwnerInfo = useCallback(async (value: Partial<Pick<OwnerInfo, 'name' | 'phone' | 'email'>>) => {
     const ownerInfo: Record<string, unknown> = {};
     if (value.name !== undefined) ownerInfo.fullName = value.name;
     if (value.phone !== undefined) ownerInfo.mobile = value.phone;
     if (value.email !== undefined) ownerInfo.email = value.email;
-    if (value.dateOfBirth !== undefined) ownerInfo.dob = value.dateOfBirth;
+    if (Object.keys(ownerInfo).length === 0) return;
 
-    const { data } = await api.patch<RawVendor>('/vendor/me', {
-      ...(Object.keys(ownerInfo).length > 0 && { ownerInfo }),
-    });
+    const { data } = await api.patch<RawVendor>('/vendor/me', { ownerInfo });
     setVendor(data);
   }, []);
 
@@ -609,8 +686,8 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     if (value.subCategory !== undefined) storeProfile.subCategory = value.subCategory;
     if (value.tags !== undefined) storeProfile.tags = value.tags;
     if (value.description !== undefined) storeProfile.description = value.description;
-    if (value.minimumOrderValue !== undefined) storeProfile.minimumOrderValue = value.minimumOrderValue;
-    if (value.avgPrepTime !== undefined) storeProfile.avgPrepTime = value.avgPrepTime;
+    if (value.minimumOrderValue != null) storeProfile.minimumOrderValue = value.minimumOrderValue;
+    if (value.avgPrepTime != null) storeProfile.avgPrepTime = value.avgPrepTime;
 
     const storeInfo: Record<string, unknown> = {};
     if (value.contactNumber !== undefined) storeInfo.contactNumber = value.contactNumber;
@@ -622,10 +699,27 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     setVendor(data);
   }, []);
 
-  const updateProfileBasics = useCallback(async (value: { storeName?: string; avatarInitials?: string }) => {
+  const updateProfileBasics = useCallback(async (value: { storeName?: string }) => {
     if (value.storeName === undefined) return;
     const { data } = await api.patch<RawVendor>('/vendor/me', { storeProfile: { storeName: value.storeName } });
     setVendor(data);
+  }, []);
+
+  const updateAvatar = useCallback(async (): Promise<boolean> => {
+    const result = await launchImageLibrary({ mediaType: 'photo', quality: 0.8, selectionLimit: 1 });
+    const asset = result.assets?.[0];
+    if (result.didCancel || !asset?.uri) return false;
+    const formData = new FormData();
+    formData.append('avatar', {
+      uri: asset.uri,
+      type: asset.type ?? 'image/jpeg',
+      name: asset.fileName ?? `avatar-${Date.now()}.jpg`,
+    } as unknown as Blob);
+    const { data } = await api.post<{ avatarUrl: string }>('/vendor/me/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    setVendor((prev) => (prev ? { ...prev, avatarUrl: data.avatarUrl } : prev));
+    return true;
   }, []);
 
   const updateStoreLogo = useCallback(async (source: 'camera' | 'gallery') => {
@@ -706,8 +800,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       setEnabledPrefs((prev) => ({ ...prev, [key]: nextEnabled }));
       try {
         await api.patch('/vendor/me/notification-prefs', { [key]: nextEnabled });
-      } catch {
+      } catch (err) {
         setEnabledPrefs((prev) => ({ ...prev, [key]: !nextEnabled }));
+        throw err;
       }
     },
     [enabledPrefs],
@@ -716,11 +811,13 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<ProfileContextValue>(
     () => ({
       isLoading,
+      errors,
       profile,
       updateVendorInfo,
       updateOwnerInfo,
       updateStoreInfo,
       updateProfileBasics,
+      updateAvatar,
       updateStoreLogo,
       updateStoreCover,
       addresses,
@@ -745,11 +842,13 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       isLoading,
+      errors,
       profile,
       updateVendorInfo,
       updateOwnerInfo,
       updateStoreInfo,
       updateProfileBasics,
+      updateAvatar,
       updateStoreLogo,
       updateStoreCover,
       addresses,
@@ -775,6 +874,16 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   );
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;
+}
+
+/** Refetches the profile whenever the calling screen gains focus, so it never shows data from before store setup/edits. */
+export function useProfileRefreshOnFocus() {
+  const { refresh } = useProfile();
+  useFocusEffect(
+    useCallback(() => {
+      refresh().catch(() => {});
+    }, [refresh]),
+  );
 }
 
 export function useProfile() {

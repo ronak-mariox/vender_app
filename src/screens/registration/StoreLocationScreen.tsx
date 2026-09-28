@@ -1,289 +1,151 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button } from '../../components';
-import { Icon } from '../../icons/Icon';
+import { Button, FormSectionCard, InfoBanner, Input, NavHeader, ScreenContainer } from '../../components';
 import { useRegistration } from '../../context/RegistrationContext';
-import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { isRequired, type FormErrors } from '../../utils/validators';
+import { colors, fontFamilies, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StoreLocation'>;
 
-export function StoreLocationScreen({ navigation }: Props) {
-  const { data, updateStoreInfo } = useRegistration();
-  const [search, setSearch] = useState('');
-  const [location, setLocation] = useState(data.storeInfo?.location ?? null);
-  const [error, setError] = useState('');
+type Errors = FormErrors<'address' | 'cityState' | 'latitude' | 'longitude'>;
 
-  function handleSearchSubmit() {
-    const query = search.trim();
-    if (!query) return;
-    setLocation({
-      address: query,
-      cityState: location?.cityState ?? '',
-      latitude: location?.latitude ?? 19.0176,
-      longitude: location?.longitude ?? 72.8459,
-    });
-    setError('');
+function parseCoordinate(value: string, limit: number): number | null {
+  const trimmed = value.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return null;
+  const parsed = parseFloat(trimmed);
+  return Math.abs(parsed) <= limit ? parsed : null;
+}
+
+export function StoreLocationScreen({ navigation }: Props) {
+  const { data, updateStoreLocation } = useRegistration();
+  const initial = data.storeLocation ?? data.storeInfo?.location;
+  const [address, setAddress] = useState(initial?.address ?? data.storeInfo?.storeAddress ?? '');
+  const [cityState, setCityState] = useState(
+    initial?.cityState ??
+      (data.businessInfo
+        ? [data.businessInfo.city, data.businessInfo.state, data.businessInfo.pincode].filter(Boolean).join(', ')
+        : ''),
+  );
+  const [latitude, setLatitude] = useState(initial ? String(initial.latitude) : '');
+  const [longitude, setLongitude] = useState(initial ? String(initial.longitude) : '');
+  const [errors, setErrors] = useState<Errors>({});
+
+  function clear(key: keyof Errors) {
+    setErrors(prev => (prev[key] ? { ...prev, [key]: undefined } : prev));
   }
 
   function handleConfirm() {
-    if (!location) {
-      setError('Please search for your store address before confirming');
-      return;
-    }
-    if (data.storeInfo) {
-      updateStoreInfo({ ...data.storeInfo, location });
-    }
+    const lat = parseCoordinate(latitude, 90);
+    const lng = parseCoordinate(longitude, 180);
+    const nextErrors: Errors = {};
+    if (!isRequired(address)) nextErrors.address = 'Enter the store street address';
+    if (!isRequired(cityState)) nextErrors.cityState = 'Enter the city, state and pincode';
+    if (lat === null) nextErrors.latitude = 'Enter a latitude between -90 and 90';
+    if (lng === null) nextErrors.longitude = 'Enter a longitude between -180 and 180';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0 || lat === null || lng === null) return;
+
+    updateStoreLocation({ address: address.trim(), cityState: cityState.trim(), latitude: lat, longitude: lng });
     navigation.goBack();
   }
 
   return (
-    <View style={styles.root}>
-      <View style={styles.mapBackground}>
-        {MAP_BLOCKS.map((block, index) => (
-          <View key={index} style={[styles.mapBlock, block]} />
-        ))}
-        <View style={styles.pinWrapper}>
-          <View style={styles.pin}>
-            <Icon name="pin" size={20} color={colors.white} />
-          </View>
-          <View style={styles.pinShadow} />
+    <ScreenContainer backgroundColor={colors.surface} scrollable>
+      <NavHeader title="Store Location" onBack={() => navigation.goBack()} />
+      <View style={styles.content}>
+        <View style={styles.headingBlock}>
+          <Text style={styles.heading}>Where is your store?</Text>
+          <Text style={styles.subtitle}>Delivery partners use this address and these coordinates to reach you</Text>
         </View>
-      </View>
 
-      <SafeAreaView edges={['top']} style={styles.topOverlay}>
-        <View style={styles.searchBar}>
-          <Icon name="search" size={18} color={colors.textSecondary} />
-          <TextInput
-            style={styles.searchInput}
-            value={search}
-            onChangeText={setSearch}
-            onSubmitEditing={handleSearchSubmit}
-            returnKeyType="search"
-            placeholder="Search for your store address..."
-            placeholderTextColor={colors.textSecondary}
+        <FormSectionCard title="Address">
+          <Input
+            label="Street Address"
+            required
+            leftIcon="pin"
+            value={address}
+            onChangeText={text => {
+              setAddress(text);
+              clear('address');
+            }}
+            placeholder="Shop number, building, street"
+            error={errors.address}
           />
-          <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+          <Input
+            label="City, State, Pincode"
+            required
+            value={cityState}
+            onChangeText={text => {
+              setCityState(text);
+              clear('cityState');
+            }}
+            placeholder="City, State 000000"
+            error={errors.cityState}
+          />
+        </FormSectionCard>
 
-      <Pressable style={styles.myLocationPill}>
-        <Icon name="crosshair" size={16} color={colors.primary} />
-        <Text style={styles.myLocationText}>Use My Location</Text>
-      </Pressable>
+        <FormSectionCard title="Coordinates">
+          <Input
+            label="Latitude"
+            required
+            value={latitude}
+            onChangeText={text => {
+              setLatitude(text.replace(/[^0-9.-]/g, ''));
+              clear('latitude');
+            }}
+            placeholder="e.g. 12.971599"
+            keyboardType="numbers-and-punctuation"
+            error={errors.latitude}
+          />
+          <Input
+            label="Longitude"
+            required
+            value={longitude}
+            onChangeText={text => {
+              setLongitude(text.replace(/[^0-9.-]/g, ''));
+              clear('longitude');
+            }}
+            placeholder="e.g. 77.594566"
+            keyboardType="numbers-and-punctuation"
+            error={errors.longitude}
+          />
+        </FormSectionCard>
 
-      <SafeAreaView edges={['bottom']} style={styles.sheet}>
-        <View style={styles.sheetHandle} />
-        <View style={styles.sheetContent}>
-          <Text style={styles.sectionLabel}>Selected Location</Text>
-          {location ? (
-            <View style={styles.locationRow}>
-              <Icon name="pin" size={16} color={colors.textSecondary} />
-              <View style={styles.locationTextColumn}>
-                <Text style={styles.locationAddress}>{location.address}</Text>
-                {location.cityState ? (
-                  <Text style={styles.locationCityState}>{location.cityState}</Text>
-                ) : null}
-              </View>
-            </View>
-          ) : (
-            <View style={styles.locationRow}>
-              <Icon name="pin" size={16} color={colors.textSecondary} />
-              <Text style={styles.locationPlaceholder}>No address selected yet</Text>
-            </View>
-          )}
+        <InfoBanner
+          variant="info"
+          message="Open any maps app, long-press your store's position and copy the latitude and longitude shown there."
+        />
 
-          {error ? (
-            <Text style={styles.errorText}>{error}</Text>
-          ) : (
-            <View style={styles.hintBanner}>
-              <Icon name="alert-triangle" size={14} color={colors.warningDark} />
-              <Text style={styles.hintText}>Search above to set your exact store address</Text>
-            </View>
-          )}
-
+        <View style={styles.footer}>
           <Button label="Confirm Location" onPress={handleConfirm} />
         </View>
-      </SafeAreaView>
-    </View>
+      </View>
+    </ScreenContainer>
   );
 }
 
-const MAP_BLOCKS: ViewStyle[] = [
-  { left: '2%', top: '15%', width: '28%', height: '9%' },
-  { left: '37%', top: '14%', width: '43%', height: '11%' },
-  { left: '2%', top: '26%', width: '24%', height: '10%' },
-  { left: '30%', top: '27%', width: '19%', height: '8%' },
-  { left: '53%', top: '15%', width: '22%', height: '12%' },
-  { left: '80%', top: '14%', width: '17%', height: '11%' },
-  { left: '2%', top: '39%', width: '20%', height: '10%' },
-  { left: '28%', top: '38%', width: '24%', height: '11%', borderRadius: 999 },
-  { left: '58%', top: '36%', width: '19%', height: '9%', backgroundColor: '#C5DDB5' },
-  { left: '83%', top: '38%', width: '15%', height: '10%' },
-];
-
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#EEF0EB',
-  },
-  mapBackground: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  mapBlock: {
-    position: 'absolute',
-    backgroundColor: '#DAE0D5',
-    borderRadius: 4,
-  },
-  pinWrapper: {
-    position: 'absolute',
-    left: '48%',
-    top: '38%',
-    alignItems: 'center',
-  },
-  pin: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderBottomLeftRadius: 0,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    transform: [{ rotate: '45deg' }],
-  },
-  pinShadow: {
-    width: 16,
-    height: 6,
-    borderRadius: 5,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    marginTop: 4,
-  },
-  topOverlay: {
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.lg,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    height: 48,
-    paddingHorizontal: spacing.xl,
-    borderRadius: radii.xl,
-    backgroundColor: colors.white,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    shadowColor: colors.black,
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  searchInput: {
-    flex: 1,
-    ...typography.body,
-    color: colors.textPrimary,
-    padding: 0,
-  },
-  cancelText: {
-    ...typography.captionSemibold,
-    color: colors.primary,
-  },
-  myLocationPill: {
-    position: 'absolute',
-    right: spacing.xl,
-    top: 140,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: radii.xl,
-    shadowColor: colors.black,
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  myLocationText: {
-    ...typography.captionSemibold,
-    color: colors.primary,
-  },
-  sheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: colors.white,
-    borderTopLeftRadius: radii.xl + 8,
-    borderTopRightRadius: radii.xl + 8,
-    shadowColor: colors.black,
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: -4 },
-    elevation: 6,
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginTop: spacing.md,
-  },
-  sheetContent: {
+  content: {
     paddingHorizontal: spacing.xxl,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xxl,
+    paddingTop: spacing.md,
     gap: spacing.xl,
   },
-  sectionLabel: {
-    ...typography.captionSemibold,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.72,
+  headingBlock: {
+    gap: spacing.xxs,
   },
-  locationRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  locationTextColumn: {
-    flex: 1,
-    gap: 1,
-  },
-  locationAddress: {
-    ...typography.bodySemibold,
+  heading: {
+    ...typography.h3,
     color: colors.textPrimary,
   },
-  locationCityState: {
+  subtitle: {
     ...typography.label,
     fontFamily: fontFamilies.regular,
     color: colors.textSecondary,
   },
-  locationPlaceholder: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-  errorText: {
-    ...typography.caption,
-    color: colors.error,
-  },
-  hintBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    backgroundColor: colors.warningSurface,
-    padding: spacing.lg,
-    borderRadius: radii.md,
-  },
-  hintText: {
-    ...typography.caption,
-    color: colors.warningDark,
+  footer: {
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
   },
 });

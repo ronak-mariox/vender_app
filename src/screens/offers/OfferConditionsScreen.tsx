@@ -5,9 +5,11 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, Input, ScreenContainer, Switch } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useOfferDraft } from '../../context/OfferDraftContext';
-import { CustomerEligibility, OfferScope } from '../../context/OffersContext';
+import { CustomerEligibility } from '../../context/OffersContext';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { OfferWizardHeader } from './OfferWizardHeader';
+import { offerScopeLabel } from './offerFormat';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OfferConditions'>;
 
@@ -35,24 +37,25 @@ function RadioRow({
 
 export function OfferConditionsScreen({ navigation }: Props) {
   const { draft, updateConditions } = useOfferDraft();
+  const { products, categories } = useProductCatalog();
 
-  const [applyOn, setApplyOn] = useState<OfferScope>(draft.conditions.applyOn);
-  const [minOrderValueEnabled, setMinOrderValueEnabled] = useState(draft.conditions.minOrderValueEnabled);
-  const [minOrderValue, setMinOrderValue] = useState(
-    draft.conditions.minOrderValue ? String(draft.conditions.minOrderValue) : '',
-  );
-  const [customerEligibility, setCustomerEligibility] = useState<CustomerEligibility>(
-    draft.conditions.customerEligibility,
-  );
+  const [minOrderValueEnabled, setMinOrderValueEnabled] = useState(draft.minOrderValueEnabled);
+  const [minOrderValue, setMinOrderValue] = useState(draft.minOrderValue > 0 ? String(draft.minOrderValue) : '');
+  const [customerEligibility, setCustomerEligibility] = useState<CustomerEligibility>(draft.customerEligibility);
+  const [minOrderError, setMinOrderError] = useState<string | undefined>();
 
-  const discountType = draft.type?.discountType ?? 'percentage';
-  const offerTypeLabel = discountType === 'percentage' ? 'Percentage Discount' : 'Fixed Amount Off';
+  const offerTypeLabel = draft.discountType === 'percentage' ? 'Percentage Discount' : 'Fixed Amount Off';
+  const scopeLabel = offerScopeLabel(draft, products, categories);
 
   function handleNext() {
+    const parsedMin = Number(minOrderValue);
+    if (minOrderValueEnabled && !(parsedMin > 0)) {
+      setMinOrderError('Enter a minimum order value greater than 0');
+      return;
+    }
     updateConditions({
-      applyOn,
       minOrderValueEnabled,
-      minOrderValue: minOrderValueEnabled ? Number(minOrderValue) || undefined : undefined,
+      minOrderValue: minOrderValueEnabled ? parsedMin : 0,
       customerEligibility,
     });
     navigation.navigate('OfferDiscountValue');
@@ -63,26 +66,12 @@ export function OfferConditionsScreen({ navigation }: Props) {
       <OfferWizardHeader title="Offer Details" step={3} onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.typeBanner}>
-          <Icon name="percent" size={22} color={colors.primary} />
-          <View>
+          <Icon name={draft.discountType === 'percentage' ? 'percent' : 'tag'} size={22} color={colors.primary} />
+          <View style={styles.typeBannerText}>
             <Text style={styles.typeBannerTitle}>{offerTypeLabel}</Text>
-            <Text style={styles.typeBannerCaption}>Selected offer type</Text>
-          </View>
-        </View>
-
-        <View>
-          <Text style={styles.sectionLabel}>Apply discount on</Text>
-          <View style={styles.radioGroup}>
-            <RadioRow
-              label="On selected products"
-              selected={applyOn === 'selected-products'}
-              onPress={() => setApplyOn('selected-products')}
-            />
-            <RadioRow
-              label="On minimum order value"
-              selected={applyOn === 'entire-store'}
-              onPress={() => setApplyOn('entire-store')}
-            />
+            <Text style={styles.typeBannerCaption} numberOfLines={2}>
+              Applies to: {scopeLabel}
+            </Text>
           </View>
         </View>
 
@@ -99,7 +88,11 @@ export function OfferConditionsScreen({ navigation }: Props) {
               <Input
                 label="Minimum Cart Value (₹)"
                 value={minOrderValue}
-                onChangeText={text => setMinOrderValue(text.replace(/[^0-9]/g, ''))}
+                onChangeText={text => {
+                  setMinOrderValue(text.replace(/[^0-9]/g, ''));
+                  if (minOrderError) setMinOrderError(undefined);
+                }}
+                error={minOrderError}
                 placeholder="e.g. 299"
                 keyboardType="number-pad"
               />
@@ -148,6 +141,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
+  },
+  typeBannerText: {
+    flex: 1,
   },
   typeBannerTitle: {
     ...typography.labelSemibold,

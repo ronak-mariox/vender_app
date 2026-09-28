@@ -1,57 +1,54 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api } from '../services/api';
+import { api, getApiErrorMessage, unwrapList } from '../services/api';
+import { useVendorAuth } from './VendorAuthContext';
 
+/** Categories the backend actually emits (see backend `notifyVendor(` callsites). */
 export type NotificationCategory =
   | 'new-order'
   | 'order-cancellation'
   | 'low-stock'
   | 'out-of-stock'
   | 'payment'
-  | 'settlement'
   | 'product-approval'
-  | 'kyc-status'
-  | 'store-status'
-  | 'system-alert'
-  | 'announcement';
+  | 'kyc-status';
 
 export type NotificationTab = 'all' | 'unread' | 'orders' | 'payments' | 'system';
 export type NotificationGroup = 'Today' | 'Yesterday' | 'Earlier';
 
 export type AppNotification = {
   id: string;
-  category: NotificationCategory;
+  /** Raw server value — may be a category this app has no bespoke screen for. */
+  category: string;
   title: string;
   subtitle: string;
+  createdAt: string;
   timeLabel: string;
   group: NotificationGroup;
   read: boolean;
   tabs: NotificationTab[];
+  /** Mongo order id — use for navigation and API calls. */
   orderId?: string;
-  settlementId?: string;
+  /** Human-readable order number — display only. */
+  orderNumber?: string;
+  productId?: string;
   productName?: string;
 };
 
-const CATEGORY_TABS: Record<NotificationCategory, NotificationTab[]> = {
+const CATEGORY_TABS: Record<string, NotificationTab[]> = {
   'new-order': ['orders'],
   'order-cancellation': ['orders'],
-  'low-stock': ['system'],
-  'out-of-stock': ['system'],
   payment: ['payments'],
   settlement: ['payments'],
-  'product-approval': ['system'],
-  'kyc-status': ['system'],
-  'store-status': ['system'],
-  'system-alert': ['system'],
-  announcement: ['system'],
 };
 
 interface RawNotification {
   id: string;
-  category: NotificationCategory;
+  category: string;
   title: string;
   subtitle: string;
   isRead: boolean;
   orderId?: string;
+  orderNumber?: string;
   productId?: string;
   productName?: string;
   createdAt: string;
@@ -90,11 +87,14 @@ function toAppNotification(raw: RawNotification): AppNotification {
     category: raw.category,
     title: raw.title,
     subtitle: raw.subtitle,
+    createdAt: raw.createdAt,
     timeLabel: timeLabelOf(raw.createdAt),
     group: groupOf(raw.createdAt),
     read: raw.isRead,
     tabs: CATEGORY_TABS[raw.category] ?? ['system'],
     orderId: raw.orderId,
+    orderNumber: raw.orderNumber,
+    productId: raw.productId,
     productName: raw.productName,
   };
 }
@@ -102,75 +102,149 @@ function toAppNotification(raw: RawNotification): AppNotification {
 type NotificationsContextValue = {
   notifications: AppNotification[];
   isLoading: boolean;
+  error: string | null;
   getNotification: (id: string) => AppNotification | undefined;
+  /** Server-side unread total (the list itself is capped at 100 rows). */
   unreadCount: number;
-  markAsRead: (id: string) => void;
-  markAllAsRead: () => void;
-  undoMarkAllAsRead: (previous: AppNotification[]) => void;
-  dismissNotification: (id: string) => void;
-  clearAll: () => void;
+  markAsRead: (id: string) => Promise<void>;
+  /** Resolves with the ids that were actually flipped to read, for undo. */
+  markAllAsRead: () => Promise<string[]>;
+  undoMarkAllAsRead: (ids: string[]) => Promise<void>;
+  dismissNotification: (id: string) => Promise<void>;
+  clearAll: () => Promise<void>;
   refresh: () => Promise<void>;
 };
 
 const NotificationsContext = createContext<NotificationsContextValue | null>(null);
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
+  const { vendor } = useVendorAuth();
+  const vendorId = vendor?.id ?? null;
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { data } = await api.get<RawNotification[]>('/vendor/notifications');
-      setNotifications(data.map(toAppNotification));
+      const [listRes, countRes] = await Promise.all([
+        api.get('/vendor/notifications'),
+        api.get<{ count: number }>('/vendor/notifications/unread-count'),
+      ]);
+      setNotifications(unwrapList<RawNotification>(listRes.data).map(toAppNotification));
+      setUnreadCount(Number(countRes.data?.count) || 0);
+      setError(null);
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Could not load notifications.'));
+      throw err;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (!vendorId) {
+      setNotifications([]);
+      setUnreadCount(0);
+      setError(null);
+      return;
+    }
     refresh().catch(() => {});
-  }, [refresh]);
+  }, [vendorId, refresh]);
 
   const getNotification = useCallback(
     (id: string) => notifications.find((item) => item.id === id),
     [notifications],
   );
 
-  const unreadCount = useMemo(() => notifications.filter((item) => !item.read).length, [notifications]);
-
-  const markAsRead = useCallback((id: string) => {
-    setNotifications((prev) => prev.map((item) => (item.id === id ? { ...item, read: true } : item)));
-    api.patch(`/vendor/notifications/${id}/read`).catch(() => {});
+  const setReadFlag = useCallback((ids: string[], read: boolean) => {
+    setNotifications((prev) => prev.map((item) => (ids.includes(item.id) ? { ...item, read } : item)));
   }, []);
 
-  const markAllAsRead = useCallback(() => {
-    setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
-    api.patch('/vendor/notifications/read-all').catch(() => {});
-  }, []);
+  const markAsRead = useCallback(
+    async (id: string) => {
+      const target = notifications.find((item) => item.id === id);
+      if (!target || target.read) return;
+      setReadFlag([id], true);
+      setUnreadCount((count) => Math.max(0, count - 1));
+      try {
+        await api.patch(`/vendor/notifications/${id}/read`);
+      } catch {
+        setReadFlag([id], false);
+        setUnreadCount((count) => count + 1);
+      }
+    },
+    [notifications, setReadFlag],
+  );
 
-  const undoMarkAllAsRead = useCallback((previous: AppNotification[]) => {
-    setNotifications(previous);
-    const idsToRestore = previous.filter((item) => !item.read).map((item) => item.id);
-    if (idsToRestore.length > 0) {
-      api.patch('/vendor/notifications/mark-unread', { ids: idsToRestore }).catch(() => {});
+  const markAllAsRead = useCallback(async () => {
+    const ids = notifications.filter((item) => !item.read).map((item) => item.id);
+    const previousCount = unreadCount;
+    if (ids.length === 0 && previousCount === 0) return [];
+    setReadFlag(ids, true);
+    setUnreadCount(0);
+    try {
+      await api.patch('/vendor/notifications/read-all');
+      return ids;
+    } catch (err) {
+      setReadFlag(ids, false);
+      setUnreadCount(previousCount);
+      throw err;
     }
-  }, []);
+  }, [notifications, unreadCount, setReadFlag]);
 
-  const dismissNotification = useCallback((id: string) => {
-    setNotifications((prev) => prev.filter((item) => item.id !== id));
-    api.delete(`/vendor/notifications/${id}`).catch(() => {});
-  }, []);
+  const undoMarkAllAsRead = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      setReadFlag(ids, false);
+      setUnreadCount((count) => count + ids.length);
+      try {
+        await api.patch('/vendor/notifications/mark-unread', { ids });
+      } catch (err) {
+        setReadFlag(ids, true);
+        setUnreadCount((count) => Math.max(0, count - ids.length));
+        throw err;
+      }
+    },
+    [setReadFlag],
+  );
 
-  const clearAll = useCallback(() => {
+  const dismissNotification = useCallback(
+    async (id: string) => {
+      const target = notifications.find((item) => item.id === id);
+      if (!target) return;
+      setNotifications((prev) => prev.filter((item) => item.id !== id));
+      if (!target.read) setUnreadCount((count) => Math.max(0, count - 1));
+      try {
+        await api.delete(`/vendor/notifications/${id}`);
+      } catch (err) {
+        refresh().catch(() => {});
+        throw err;
+      }
+    },
+    [notifications, refresh],
+  );
+
+  const clearAll = useCallback(async () => {
+    const previous = notifications;
+    const previousCount = unreadCount;
     setNotifications([]);
-    api.delete('/vendor/notifications').catch(() => {});
-  }, []);
+    setUnreadCount(0);
+    try {
+      await api.delete('/vendor/notifications');
+    } catch (err) {
+      setNotifications(previous);
+      setUnreadCount(previousCount);
+      throw err;
+    }
+  }, [notifications, unreadCount]);
 
   const value = useMemo(
     () => ({
       notifications,
       isLoading,
+      error,
       getNotification,
       unreadCount,
       markAsRead,
@@ -180,7 +254,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       clearAll,
       refresh,
     }),
-    [notifications, isLoading, getNotification, unreadCount, markAsRead, markAllAsRead, undoMarkAllAsRead, dismissNotification, clearAll, refresh],
+    [
+      notifications,
+      isLoading,
+      error,
+      getNotification,
+      unreadCount,
+      markAsRead,
+      markAllAsRead,
+      undoMarkAllAsRead,
+      dismissNotification,
+      clearAll,
+      refresh,
+    ],
   );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

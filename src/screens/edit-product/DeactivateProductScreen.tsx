@@ -8,6 +8,7 @@ import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'DeactivateProduct'>;
 
@@ -59,9 +60,12 @@ export function DeactivateProductScreen({ navigation, route }: Props) {
           </Text>
 
           <View style={styles.summaryCard}>
-            <View style={styles.summaryIcon}>
-              <Icon name="package" size={20} color={colors.textSecondary} />
-            </View>
+            <ProductThumb
+              imageUrl={product.images?.[0]}
+              style={styles.summaryIcon}
+              iconSize={20}
+              iconColor={colors.textSecondary}
+            />
             <View style={styles.summaryTextColumn}>
               <Text style={styles.summaryName}>{product.name}</Text>
               <Text style={styles.summaryMeta}>

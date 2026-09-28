@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -15,42 +15,75 @@ import {
 import { Icon } from '../../icons/Icon';
 import {
   useStoreSetup,
+  type DeliverySettingsData,
   type DeliverySlab,
   type FulfillmentType,
 } from '../../context/StoreSetupContext';
-import { api, getApiErrorMessage } from '../../services/api';
-import { isPositiveNumber, type FormErrors } from '../../utils/validators';
+import { api } from '../../services/api';
+import { type FormErrors } from '../../utils/validators';
+import { handleFormSaveError } from '../registration/registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'DeliverySettings'>;
 
-type Errors = FormErrors<'slabs' | 'minimumOrder' | 'freeDeliveryAbove'>;
+const FIELDS = [
+  'fulfillmentType',
+  'deliveryRadiusKm',
+  'minimumOrderForDelivery',
+  'chargeType',
+  'slabs',
+  'flatCharge',
+  'freeDeliveryAbove',
+] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
-const CHARGE_TYPES = ['Distance-based slab', 'Flat rate', 'Free delivery'];
+const SLAB_MODE = 'Distance-based slab';
+const FLAT_MODE = 'Flat rate';
+const FREE_MODE = 'Free delivery';
+const CHARGE_TYPES = [SLAB_MODE, FLAT_MODE, FREE_MODE];
 const RADIUS_OPTIONS = [1, 3, 5, 10, 20];
+const ALL_DISTANCES = 'All distances';
 
-const DEFAULT_SLABS: DeliverySlab[] = [
-  { id: 'slab-1', range: '0 – 2 km', charge: '₹ 20' },
-  { id: 'slab-2', range: '2 – 5 km', charge: '₹ 40' },
-  { id: 'slab-3', range: '5+ km', charge: '₹ 60' },
-];
+const isAmount = (value: string) => /^\d+$/.test(value.trim());
+const chargeDigits = (charge: string) => charge.replace(/[^0-9]/g, '');
 
 export function DeliverySettingsScreen({ navigation }: Props) {
   const { data, updateDelivery } = useStoreSetup();
-  const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>(
-    data.delivery?.fulfillmentType ?? 'delivery',
+  const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType | null>(
+    data.delivery?.fulfillmentType ?? null,
   );
-  const [radius, setRadius] = useState(data.delivery?.deliveryRadiusKm ?? 5);
-  const [minimumOrder, setMinimumOrder] = useState(data.delivery?.minimumOrderForDelivery ?? '150');
-  const [chargeType, setChargeType] = useState(data.delivery?.chargeType ?? 'Distance-based slab');
-  const [slabs, setSlabs] = useState<DeliverySlab[]>(data.delivery?.slabs ?? DEFAULT_SLABS);
-  const [freeDeliveryAbove, setFreeDeliveryAbove] = useState(data.delivery?.freeDeliveryAbove ?? '500');
+  const [radius, setRadius] = useState<number | null>(data.delivery?.deliveryRadiusKm ?? null);
+  const [minimumOrder, setMinimumOrder] = useState(data.delivery?.minimumOrderForDelivery ?? '');
+  const [chargeType, setChargeType] = useState(data.delivery?.chargeType ?? '');
+  const [slabs, setSlabs] = useState<DeliverySlab[]>(
+    data.delivery?.chargeType === SLAB_MODE ? data.delivery.slabs : [],
+  );
+  const [flatCharge, setFlatCharge] = useState(
+    data.delivery?.chargeType === FLAT_MODE ? chargeDigits(data.delivery.slabs[0]?.charge ?? '') : '',
+  );
+  const [freeDeliveryAbove, setFreeDeliveryAbove] = useState(data.delivery?.freeDeliveryAbove ?? '');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
 
+  useEffect(() => {
+    const delivery = data.delivery;
+    if (!delivery) return;
+    setFulfillmentType(delivery.fulfillmentType);
+    setRadius(delivery.deliveryRadiusKm);
+    setMinimumOrder(delivery.minimumOrderForDelivery);
+    setChargeType(delivery.chargeType);
+    setSlabs(delivery.chargeType === SLAB_MODE ? delivery.slabs : []);
+    setFlatCharge(delivery.chargeType === FLAT_MODE ? chargeDigits(delivery.slabs[0]?.charge ?? '') : '');
+    setFreeDeliveryAbove(delivery.freeDeliveryAbove);
+  }, [data.delivery]);
+
+  function clearError(key: keyof Errors) {
+    setErrors(prev => (prev[key] ? { ...prev, [key]: undefined } : prev));
+  }
+
   function updateSlab(id: string, patch: Partial<DeliverySlab>) {
     setSlabs(prev => prev.map(slab => (slab.id === id ? { ...slab, ...patch } : slab)));
-    if (errors.slabs) setErrors(prev => ({ ...prev, slabs: undefined }));
+    clearError('slabs');
   }
 
   function removeSlab(id: string) {
@@ -59,31 +92,46 @@ export function DeliverySettingsScreen({ navigation }: Props) {
 
   function addSlab() {
     setSlabs(prev => [...prev, { id: `slab-${Date.now()}`, range: '', charge: '' }]);
+    clearError('slabs');
   }
 
   async function handleContinue() {
     const nextErrors: Errors = {};
-    if (slabs.length === 0) {
-      nextErrors.slabs = 'Add at least one delivery slab';
-    } else if (slabs.some(slab => !slab.range.trim() || !slab.charge.trim())) {
-      nextErrors.slabs = 'Fill in the range and charge for every slab';
+    if (!fulfillmentType) nextErrors.fulfillmentType = 'Choose how customers receive their orders';
+    if (!radius) nextErrors.deliveryRadiusKm = 'Select a delivery radius';
+    if (!isAmount(minimumOrder)) nextErrors.minimumOrderForDelivery = 'Enter a valid amount (0 for no minimum)';
+    if (!chargeType) nextErrors.chargeType = 'Select how you charge for delivery';
+    if (chargeType === SLAB_MODE) {
+      if (slabs.length === 0) {
+        nextErrors.slabs = 'Add at least one delivery slab';
+      } else if (slabs.some(slab => !slab.range.trim() || !slab.charge.trim())) {
+        nextErrors.slabs = 'Fill in the range and charge for every slab';
+      }
     }
-    if (!isPositiveNumber(minimumOrder)) {
-      nextErrors.minimumOrder = 'Enter a valid amount';
-    }
-    if (!isPositiveNumber(freeDeliveryAbove)) {
+    if (chargeType === FLAT_MODE && !isAmount(flatCharge)) nextErrors.flatCharge = 'Enter the delivery charge';
+    if (chargeType !== FREE_MODE && !isAmount(freeDeliveryAbove)) {
       nextErrors.freeDeliveryAbove = 'Enter a valid amount';
     }
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0 || !fulfillmentType || !radius) return;
 
-    const value = {
+    const payloadSlabs: DeliverySlab[] =
+      chargeType === SLAB_MODE
+        ? slabs.map(slab => ({ ...slab, range: slab.range.trim() }))
+        : [
+            {
+              id: 'slab-all',
+              range: ALL_DISTANCES,
+              charge: chargeType === FLAT_MODE ? `₹ ${flatCharge}` : '₹ 0',
+            },
+          ];
+    const value: DeliverySettingsData = {
       fulfillmentType,
       deliveryRadiusKm: radius,
       minimumOrderForDelivery: minimumOrder,
       chargeType,
-      slabs,
-      freeDeliveryAbove,
+      slabs: payloadSlabs,
+      freeDeliveryAbove: chargeType === FREE_MODE ? '0' : freeDeliveryAbove,
     };
     setSaving(true);
     try {
@@ -91,7 +139,7 @@ export function DeliverySettingsScreen({ navigation }: Props) {
       updateDelivery(value);
       navigation.navigate('ServiceAvailability');
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save your delivery settings. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -113,36 +161,49 @@ export function DeliverySettingsScreen({ navigation }: Props) {
             title="Home Delivery"
             description="Deliver to customer's address"
             selected={fulfillmentType === 'delivery'}
-            onPress={() => setFulfillmentType('delivery')}
+            onPress={() => {
+              setFulfillmentType('delivery');
+              clearError('fulfillmentType');
+            }}
           />
           <SelectableCard
             icon="home"
             title="Self Pickup"
             description="Customer collects from store"
             selected={fulfillmentType === 'pickup'}
-            onPress={() => setFulfillmentType('pickup')}
+            onPress={() => {
+              setFulfillmentType('pickup');
+              clearError('fulfillmentType');
+            }}
           />
           <SelectableCard
             icon="users"
             title="Both Options"
             description="Let customers choose at checkout"
             selected={fulfillmentType === 'both'}
-            onPress={() => setFulfillmentType('both')}
+            onPress={() => {
+              setFulfillmentType('both');
+              clearError('fulfillmentType');
+            }}
           />
+          {errors.fulfillmentType ? <Text style={styles.errorText}>{errors.fulfillmentType}</Text> : null}
         </FormSectionCard>
 
         <FormSectionCard title="Delivery Zone">
           <View>
             <View style={styles.radiusHeader}>
               <Text style={styles.radiusLabel}>Delivery Radius</Text>
-              <Text style={styles.radiusValue}>{radius} km</Text>
+              <Text style={styles.radiusValue}>{radius ? `${radius} km` : 'Not set'}</Text>
             </View>
             <View style={styles.radiusChipsRow}>
               {RADIUS_OPTIONS.map(option => (
                 <Pressable
                   key={option}
                   style={[styles.radiusChip, radius === option && styles.radiusChipActive]}
-                  onPress={() => setRadius(option)}
+                  onPress={() => {
+                    setRadius(option);
+                    clearError('deliveryRadiusKm');
+                  }}
                 >
                   <Text
                     style={[styles.radiusChipText, radius === option && styles.radiusChipTextActive]}
@@ -152,24 +213,49 @@ export function DeliverySettingsScreen({ navigation }: Props) {
                 </Pressable>
               ))}
             </View>
+            {errors.deliveryRadiusKm ? <Text style={styles.errorText}>{errors.deliveryRadiusKm}</Text> : null}
           </View>
           <Input
             label="Minimum Order for Delivery (₹)"
             value={minimumOrder}
             onChangeText={text => {
               setMinimumOrder(text.replace(/[^0-9]/g, ''));
-              if (errors.minimumOrder) setErrors(prev => ({ ...prev, minimumOrder: undefined }));
+              clearError('minimumOrderForDelivery');
             }}
             keyboardType="number-pad"
-            placeholder="150"
-            error={errors.minimumOrder}
+            placeholder="0 for no minimum"
+            error={errors.minimumOrderForDelivery}
           />
         </FormSectionCard>
 
         <FormSectionCard title="Delivery Charges">
-          <SelectField label="Charge Type" value={chargeType} options={CHARGE_TYPES} onChange={setChargeType} />
+          <SelectField
+            label="Charge Type"
+            value={chargeType}
+            options={CHARGE_TYPES}
+            onChange={value => {
+              setChargeType(value);
+              setErrors(prev => ({ ...prev, chargeType: undefined, slabs: undefined, flatCharge: undefined }));
+            }}
+            error={errors.chargeType}
+          />
 
-          {chargeType === 'Distance-based slab' ? (
+          {chargeType === FLAT_MODE ? (
+            <Input
+              label="Delivery Charge (₹)"
+              required
+              value={flatCharge}
+              onChangeText={text => {
+                setFlatCharge(text.replace(/[^0-9]/g, ''));
+                clearError('flatCharge');
+              }}
+              keyboardType="number-pad"
+              placeholder="Charge per order"
+              error={errors.flatCharge}
+            />
+          ) : null}
+
+          {chargeType === SLAB_MODE ? (
             <View style={styles.slabsList}>
               {slabs.map(slab => (
                 <View key={slab.id} style={styles.slabRow}>
@@ -205,18 +291,20 @@ export function DeliverySettingsScreen({ navigation }: Props) {
             </View>
           ) : null}
 
-          <Input
-            label="Free Delivery Above (₹)"
-            value={freeDeliveryAbove}
-            onChangeText={text => {
-              setFreeDeliveryAbove(text.replace(/[^0-9]/g, ''));
-              if (errors.freeDeliveryAbove) setErrors(prev => ({ ...prev, freeDeliveryAbove: undefined }));
-            }}
-            keyboardType="number-pad"
-            placeholder="500"
-            helperText={errors.freeDeliveryAbove ? undefined : 'Free delivery for orders above this amount'}
-            error={errors.freeDeliveryAbove}
-          />
+          {chargeType && chargeType !== FREE_MODE ? (
+            <Input
+              label="Free Delivery Above (₹)"
+              value={freeDeliveryAbove}
+              onChangeText={text => {
+                setFreeDeliveryAbove(text.replace(/[^0-9]/g, ''));
+                clearError('freeDeliveryAbove');
+              }}
+              keyboardType="number-pad"
+              placeholder="e.g. 500"
+              helperText={errors.freeDeliveryAbove ? undefined : 'Free delivery for orders above this amount'}
+              error={errors.freeDeliveryAbove}
+            />
+          ) : null}
         </FormSectionCard>
 
         {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}

@@ -1,55 +1,48 @@
 import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { useOrders } from '../../context/OrdersContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { OrderActionLayout } from './OrderActionLayout';
+import { driverLabel } from './orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'DispatchedOrders'>;
 
 export function DispatchedScreen({ navigation }: Props) {
   const { ordersByStatus } = useOrders();
-  const dispatchedOrders = ordersByStatus(['dispatched']);
+  const dispatchedOrders = ordersByStatus(['out_for_delivery']);
 
   return (
     <OrderActionLayout
-      title="Dispatched"
+      title="Out for Delivery"
       onBack={() => navigation.goBack()}
       banner={{
         variant: 'info',
         message: 'Orders en route to customers. No action needed from your end.',
       }}
+      emptyMessage="No orders out for delivery"
       orders={dispatchedOrders}
-      onOrderPress={orderId => navigation.navigate('OrderDetails', { orderId })}
-      renderOrderExtra={order =>
-        order.deliveryPartner ? (
+      onOrderPress={orderId => navigation.navigate('OrderDispatched', { orderId })}
+      renderOrderExtra={order => {
+        const phone = order.driver?.phone;
+        return (
           <View style={styles.partnerRow}>
             <View style={styles.partnerIcon}>
               <Icon name="bike" size={18} color="#4338CA" />
             </View>
             <Text style={styles.partnerText} numberOfLines={1}>
-              {order.deliveryPartner.name} · {order.deliveryPartner.vehicle} · {order.deliveryPartner.plate}
+              {driverLabel(order) || 'Delivery partner'}
             </Text>
-            <Pressable
-              style={styles.callButton}
-              onPress={() => Alert.alert('Call Delivery Partner', 'Coming soon.')}
-            >
-              <Icon name="phone" size={15} color={colors.primary} />
-            </Pressable>
+            {phone ? (
+              <Pressable style={styles.callButton} onPress={() => Linking.openURL(`tel:${phone}`)}>
+                <Icon name="phone" size={15} color={colors.primary} />
+              </Pressable>
+            ) : null}
           </View>
-        ) : (
-          <View style={styles.partnerRow}>
-            <View style={styles.partnerIcon}>
-              <Icon name="bike" size={18} color="#4338CA" />
-            </View>
-            <Text style={styles.partnerText} numberOfLines={1}>
-              Delivery partner will be assigned shortly
-            </Text>
-          </View>
-        )
-      }
+        );
+      }}
     />
   );
 }

@@ -5,61 +5,48 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, Input, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProfile } from '../../context/ProfileContext';
-import { isRequired, isValidGSTIN, isValidPAN, isValidPincode, type FormErrors } from '../../utils/validators';
+import { isRequired, isValidPincode, type FormErrors } from '../../utils/validators';
+import { getApiErrorMessage, getFieldErrors } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileEditVendorInfo'>;
 
-type Errors = FormErrors<
-  'legalName' | 'businessType' | 'addressLine1' | 'city' | 'state' | 'pincode' | 'gstNumber' | 'panNumber'
->;
+type Errors = FormErrors<'addressLine1' | 'city' | 'state' | 'pincode'>;
 
 export function ProfileEditVendorInfoScreen({ navigation }: Props) {
   const { profile, updateVendorInfo } = useProfile();
   const { vendor } = profile;
 
-  const [legalName, setLegalName] = useState(vendor.legalName);
-  const [businessType, setBusinessType] = useState(vendor.businessType);
   const [addressLine1, setAddressLine1] = useState(vendor.addressLine1);
   const [addressLine2, setAddressLine2] = useState(vendor.addressLine2);
   const [city, setCity] = useState(vendor.city);
   const [state, setState] = useState(vendor.state);
   const [pincode, setPincode] = useState(vendor.pincode);
-  const [gstNumber, setGstNumber] = useState(vendor.gstNumber);
-  const [panNumber, setPanNumber] = useState(vendor.panNumber);
   const [errors, setErrors] = useState<Errors>({});
   const [isSaving, setIsSaving] = useState(false);
 
   async function handleSave() {
     if (isSaving) return;
     const nextErrors: Errors = {};
-    if (!isRequired(legalName)) nextErrors.legalName = 'Required';
-    if (!isRequired(businessType)) nextErrors.businessType = 'Required';
     if (!isRequired(addressLine1)) nextErrors.addressLine1 = 'Required';
     if (!isRequired(city)) nextErrors.city = 'Required';
     if (!isRequired(state)) nextErrors.state = 'Required';
     if (pincode && !isValidPincode(pincode)) nextErrors.pincode = 'Enter a valid 6-digit pincode';
-    if (gstNumber && !isValidGSTIN(gstNumber)) nextErrors.gstNumber = 'Enter a valid GSTIN';
-    if (panNumber && !isValidPAN(panNumber)) nextErrors.panNumber = 'Enter a valid PAN';
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
     setIsSaving(true);
     try {
       await updateVendorInfo({
-        legalName: legalName.trim(),
-        businessType: businessType.trim(),
         addressLine1: addressLine1.trim(),
         addressLine2: addressLine2.trim(),
         city: city.trim(),
         state: state.trim(),
         pincode: pincode.trim(),
-        gstNumber: gstNumber.trim().toUpperCase(),
-        panNumber: panNumber.trim().toUpperCase(),
       });
       navigation.goBack();
-    } catch {
-      setErrors({ form: 'Could not save business details — please check your connection and try again.' });
+    } catch (err) {
+      setErrors({ ...getFieldErrors(err), form: getApiErrorMessage(err, 'Could not save business details.') });
     } finally {
       setIsSaving(false);
     }
@@ -72,31 +59,15 @@ export function ProfileEditVendorInfoScreen({ navigation }: Props) {
         <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.warningBanner}>
             <Icon name="info" size={14} color={colors.warningDark} />
-            <Text style={styles.warningText}>Some details require re-verification if changed.</Text>
+            <Text style={styles.warningText}>
+              Business name, type, GSTIN and PAN are verified identity details and can't be edited here. Use Documents to
+              replace a verified document.
+            </Text>
           </View>
 
           <View style={styles.form}>
-            <Input
-              label="Business Name"
-              required
-              value={legalName}
-              onChangeText={text => {
-                setLegalName(text);
-                if (errors.legalName) setErrors(prev => ({ ...prev, legalName: undefined }));
-              }}
-              error={errors.legalName}
-            />
-            <Input
-              label="Business Type"
-              required
-              value={businessType}
-              onChangeText={text => {
-                setBusinessType(text);
-                if (errors.businessType) setErrors(prev => ({ ...prev, businessType: undefined }));
-              }}
-              placeholder="e.g. Proprietorship, Partnership"
-              error={errors.businessType}
-            />
+            <Input label="Business Name" value={vendor.legalName} onChangeText={() => {}} editable={false} />
+            <Input label="Business Type" value={vendor.businessType} onChangeText={() => {}} editable={false} />
             <Input
               label="Address Line 1"
               required
@@ -138,26 +109,8 @@ export function ProfileEditVendorInfoScreen({ navigation }: Props) {
               keyboardType="number-pad"
               error={errors.pincode}
             />
-            <Input
-              label="GSTIN"
-              value={gstNumber}
-              onChangeText={text => {
-                setGstNumber(text.toUpperCase().slice(0, 15));
-                if (errors.gstNumber) setErrors(prev => ({ ...prev, gstNumber: undefined }));
-              }}
-              autoCapitalize="characters"
-              error={errors.gstNumber}
-            />
-            <Input
-              label="PAN"
-              value={panNumber}
-              onChangeText={text => {
-                setPanNumber(text.toUpperCase().slice(0, 10));
-                if (errors.panNumber) setErrors(prev => ({ ...prev, panNumber: undefined }));
-              }}
-              autoCapitalize="characters"
-              error={errors.panNumber}
-            />
+            {vendor.gstNumber ? <Input label="GSTIN" value={vendor.gstNumber} onChangeText={() => {}} editable={false} /> : null}
+            {vendor.panNumber ? <Input label="PAN" value={vendor.panNumber} onChangeText={() => {}} editable={false} /> : null}
 
             {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}
           </View>

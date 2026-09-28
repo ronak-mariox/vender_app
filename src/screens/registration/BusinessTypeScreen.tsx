@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -6,6 +6,7 @@ import { Button, NavHeader, ProgressSteps, ScreenContainer, SelectableCard } fro
 import type { IconName } from '../../icons/Icon';
 import { useRegistration, type BusinessTypeValue } from '../../context/RegistrationContext';
 import { api, getApiErrorMessage } from '../../services/api';
+import { isRegistrationLockedError, showRegistrationLocked } from './registrationHelpers';
 import { colors, fontFamilies, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'BusinessType'>;
@@ -26,10 +27,14 @@ export const BUSINESS_TYPE_OPTIONS: {
 export function BusinessTypeScreen({ navigation }: Props) {
   const { data, updateBusinessType } = useRegistration();
   const [selected, setSelected] = useState<BusinessTypeValue | undefined>(
-    data.businessType ?? 'proprietorship',
+    data.businessType,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (data.businessType) setSelected(data.businessType);
+  }, [data.businessType]);
 
   async function handleContinue() {
     if (!selected) return;
@@ -40,6 +45,10 @@ export function BusinessTypeScreen({ navigation }: Props) {
       updateBusinessType(selected);
       navigation.navigate('BusinessInfo');
     } catch (err) {
+      if (isRegistrationLockedError(err)) {
+        showRegistrationLocked();
+        return;
+      }
       setError(getApiErrorMessage(err, 'Could not save your business type. Please try again.'));
     } finally {
       setSaving(false);

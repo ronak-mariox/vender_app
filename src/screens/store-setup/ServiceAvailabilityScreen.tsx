@@ -1,46 +1,98 @@
-import React, { useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, FormSectionCard, Input, NavHeader, ProgressSteps, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useStoreSetup, type DeliverySlot } from '../../context/StoreSetupContext';
-import { api, getApiErrorMessage } from '../../services/api';
-import { isPositiveNumber, type FormErrors } from '../../utils/validators';
+import { useStoreSetup, type DeliverySlot, type ServiceAvailabilityData } from '../../context/StoreSetupContext';
+import { api } from '../../services/api';
+import { type FormErrors } from '../../utils/validators';
+import { handleFormSaveError } from '../registration/registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ServiceAvailability'>;
 
-type Errors = FormErrors<'maxOrders'>;
+const FIELDS = ['slots', 'maxSimultaneousOrders'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
-const DEFAULT_SLOTS: DeliverySlot[] = [
-  { id: 'morning', label: 'Morning', window: '8:00 AM – 12:00 PM', totalSlots: 20, usedSlots: 12 },
-  { id: 'afternoon', label: 'Afternoon', window: '12:00 PM – 4:00 PM', totalSlots: 20, usedSlots: 8 },
-  { id: 'evening', label: 'Evening', window: '4:00 PM – 8:00 PM', totalSlots: 25, usedSlots: 19 },
-  { id: 'night', label: 'Night', window: '8:00 PM – 10:00 PM', totalSlots: 10, usedSlots: 3 },
-];
+type SlotDraft = { id: string; label: string; window: string; totalSlots: string; usedSlots: number };
+
+function toDrafts(slots: DeliverySlot[] | undefined): SlotDraft[] {
+  return (slots ?? []).map(slot => ({ ...slot, totalSlots: String(slot.totalSlots) }));
+}
 
 export function ServiceAvailabilityScreen({ navigation }: Props) {
   const { data, updateServiceAvailability } = useStoreSetup();
-  const [slotsEnabled, setSlotsEnabled] = useState(data.serviceAvailability?.slotsEnabled ?? true);
-  const [slots] = useState<DeliverySlot[]>(data.serviceAvailability?.slots ?? DEFAULT_SLOTS);
-  const [maxOrders, setMaxOrders] = useState(data.serviceAvailability?.maxSimultaneousOrders ?? '25');
-  const [autoPause, setAutoPause] = useState(data.serviceAvailability?.autoPauseAtCapacity ?? true);
+  const saved = data.serviceAvailability;
+  const [slotsEnabled, setSlotsEnabled] = useState(saved?.slotsEnabled ?? false);
+  const [slots, setSlots] = useState<SlotDraft[]>(saved?.slotsEnabled ? toDrafts(saved.slots) : []);
+  const [maxOrders, setMaxOrders] = useState(saved?.maxSimultaneousOrders ?? '');
+  const [autoPause, setAutoPause] = useState(saved?.autoPauseAtCapacity ?? false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
 
+  useEffect(() => {
+    if (!saved) return;
+    setSlotsEnabled(saved.slotsEnabled);
+    setSlots(saved.slotsEnabled ? toDrafts(saved.slots) : []);
+    setMaxOrders(saved.maxSimultaneousOrders);
+    setAutoPause(saved.autoPauseAtCapacity);
+  }, [saved]);
+
+  function updateSlot(id: string, patch: Partial<SlotDraft>) {
+    setSlots(prev => prev.map(slot => (slot.id === id ? { ...slot, ...patch } : slot)));
+    setErrors(prev => (prev.slots ? { ...prev, slots: undefined } : prev));
+  }
+
+  function addSlot() {
+    setSlots(prev => [...prev, { id: `slot-${Date.now()}`, label: '', window: '', totalSlots: '', usedSlots: 0 }]);
+  }
+
+  function removeSlot(id: string) {
+    setSlots(prev => prev.filter(slot => slot.id !== id));
+  }
+
   async function handleContinue() {
     const nextErrors: Errors = {};
-    if (!isPositiveNumber(maxOrders)) {
-      nextErrors.maxOrders = 'Enter a valid number of orders';
+    const capacity = parseInt(maxOrders, 10);
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      nextErrors.maxSimultaneousOrders = 'Enter a valid number of orders';
+    }
+    if (slotsEnabled) {
+      if (slots.length === 0) nextErrors.slots = 'Add at least one delivery slot';
+      else if (
+        slots.some(slot => !slot.label.trim() || !slot.window.trim() || !(parseInt(slot.totalSlots, 10) >= 1))
+      ) {
+        nextErrors.slots = 'Every slot needs a name, a time window and a capacity of at least 1';
+      }
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    const value = {
+    const hours = data.operatingHours;
+    // The backend always expects at least one slot; without slot-based delivery the
+    // store's whole opening window is the single slot.
+    const payloadSlots: DeliverySlot[] = slotsEnabled
+      ? slots.map(slot => ({
+          id: slot.id,
+          label: slot.label.trim(),
+          window: slot.window.trim(),
+          totalSlots: parseInt(slot.totalSlots, 10),
+          usedSlots: slot.usedSlots,
+        }))
+      : [
+          {
+            id: 'slot-all-day',
+            label: 'Store hours',
+            window: hours ? `${hours.defaultOpen} – ${hours.defaultClose}` : 'Store hours',
+            totalSlots: capacity,
+            usedSlots: 0,
+          },
+        ];
+    const value: ServiceAvailabilityData = {
       slotsEnabled,
-      slots,
-      maxSimultaneousOrders: maxOrders,
+      slots: payloadSlots,
+      maxSimultaneousOrders: String(capacity),
       autoPauseAtCapacity: autoPause,
     };
     setSaving(true);
@@ -49,7 +101,7 @@ export function ServiceAvailabilityScreen({ navigation }: Props) {
       updateServiceAvailability(value);
       navigation.navigate('StoreStatus');
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save service availability. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -87,18 +139,39 @@ export function ServiceAvailabilityScreen({ navigation }: Props) {
                     <Icon name="clock" size={16} color={colors.primary} />
                   </View>
                   <View style={styles.slotTextColumn}>
-                    <Text style={styles.slotLabel}>{slot.label}</Text>
-                    <Text style={styles.slotWindow}>{slot.window}</Text>
+                    <TextInput
+                      style={styles.slotInput}
+                      value={slot.label}
+                      onChangeText={text => updateSlot(slot.id, { label: text })}
+                      placeholder="Slot name, e.g. Morning"
+                      placeholderTextColor={colors.textTertiary}
+                    />
+                    <TextInput
+                      style={styles.slotInput}
+                      value={slot.window}
+                      onChangeText={text => updateSlot(slot.id, { window: text })}
+                      placeholder="Window, e.g. 8:00 AM – 12:00 PM"
+                      placeholderTextColor={colors.textTertiary}
+                    />
+                    <TextInput
+                      style={styles.slotInput}
+                      value={slot.totalSlots}
+                      onChangeText={text => updateSlot(slot.id, { totalSlots: text.replace(/[^0-9]/g, '') })}
+                      placeholder="Orders per slot"
+                      keyboardType="number-pad"
+                      placeholderTextColor={colors.textTertiary}
+                    />
                   </View>
-                  <View style={styles.slotCountColumn}>
-                    <Text style={styles.slotCount}>{slot.totalSlots} slots</Text>
-                    <Text style={styles.slotUsed}>{slot.usedSlots} used</Text>
-                  </View>
-                  <Pressable hitSlop={6} onPress={() => Alert.alert(slot.label, 'Editing slots coming soon.')}>
-                    <Icon name="edit" size={14} color={colors.textSecondary} />
+                  <Pressable hitSlop={6} onPress={() => removeSlot(slot.id)}>
+                    <Icon name="x" size={14} color={colors.textSecondary} />
                   </Pressable>
                 </View>
               ))}
+              <Pressable style={styles.addSlotButton} onPress={addSlot}>
+                <Icon name="plus" size={14} color={colors.textSecondary} />
+                <Text style={styles.addSlotText}>Add slot</Text>
+              </Pressable>
+              {errors.slots ? <Text style={styles.errorText}>{errors.slots}</Text> : null}
             </View>
           ) : null}
         </FormSectionCard>
@@ -109,12 +182,12 @@ export function ServiceAvailabilityScreen({ navigation }: Props) {
             value={maxOrders}
             onChangeText={text => {
               setMaxOrders(text.replace(/[^0-9]/g, ''));
-              if (errors.maxOrders) setErrors(prev => ({ ...prev, maxOrders: undefined }));
+              setErrors(prev => ({ ...prev, maxSimultaneousOrders: undefined }));
             }}
             keyboardType="number-pad"
-            placeholder="25"
-            helperText={errors.maxOrders ? undefined : 'Store will auto-pause when this limit is reached'}
-            error={errors.maxOrders}
+            placeholder="e.g. 25"
+            helperText={errors.maxSimultaneousOrders ? undefined : 'How many orders you can prepare at once'}
+            error={errors.maxSimultaneousOrders}
           />
           <View style={styles.toggleRow}>
             <View style={styles.toggleTextColumn}>
@@ -198,25 +271,25 @@ const styles = StyleSheet.create({
   },
   slotTextColumn: {
     flex: 1,
-    gap: 1,
+    gap: spacing.xs,
   },
-  slotLabel: {
-    ...typography.labelSemibold,
+  slotInput: {
+    ...typography.caption,
     color: colors.textPrimary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
-  slotWindow: {
-    ...typography.tiny,
-    color: colors.textSecondary,
+  addSlotButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
   },
-  slotCountColumn: {
-    alignItems: 'flex-end',
-  },
-  slotCount: {
+  addSlotText: {
     ...typography.captionSemibold,
-    color: colors.textPrimary,
-  },
-  slotUsed: {
-    ...typography.tiny,
     color: colors.textSecondary,
   },
   footer: {

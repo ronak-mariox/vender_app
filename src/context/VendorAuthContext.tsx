@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ACCESS_TOKEN_KEY, api, REFRESH_TOKEN_KEY, setForceLogoutHandler } from '../services/api';
+import { ACCESS_TOKEN_KEY, api, REFRESH_TOKEN_KEY, setForceLogoutHandler, type ForceLogoutReason } from '../services/api';
+import { resetNavigation } from '../navigation/navigationRef';
 
 const SESSION_RESTORE_RETRIES = 2;
 const SESSION_RESTORE_RETRY_DELAY_MS = 800;
@@ -49,6 +50,9 @@ type VendorAuthContextValue = {
   vendor: VendorProfile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  /** True when a stored session exists but the server couldn't be reached to validate it. */
+  restoreFailed: boolean;
+  retryRestore: () => Promise<void>;
   requestOtp: (phone: string) => Promise<{ message: string; devOtp?: string }>;
   verifyOtp: (phone: string, otp: string, intent: OtpIntent) => Promise<VerifyOtpResult>;
   register: (payload: RegisterPayload) => Promise<{ vendor: VendorProfile }>;
@@ -70,6 +74,7 @@ async function persistTokens(accessToken: string, refreshToken: string) {
 export function VendorAuthProvider({ children }: { children: React.ReactNode }) {
   const [vendor, setVendor] = useState<VendorProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [restoreFailed, setRestoreFailed] = useState(false);
 
   const clearSession = useCallback(async () => {
     await AsyncStorage.removeMany([ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY]);
@@ -81,53 +86,79 @@ export function VendorAuthProvider({ children }: { children: React.ReactNode }) 
     setVendor(data);
   }, []);
 
-  // Let the api layer force-clear vendor state when a silent token refresh fails.
+  // Let the api layer force-clear vendor state (and every data context, which all key
+  // off `vendor`) when a silent token refresh fails or the account gets restricted.
   useEffect(() => {
-    setForceLogoutHandler(() => setVendor(null));
+    setForceLogoutHandler((reason: ForceLogoutReason, message?: string) => {
+      setVendor(null);
+      resetNavigation('Login', {
+        message:
+          reason === 'account_restricted'
+            ? message ?? 'Your account has been restricted. Contact support for help.'
+            : 'Your session has expired. Please log in again.',
+      });
+    });
     return () => setForceLogoutHandler(null);
   }, []);
 
   // Restore session on app start: if we have a stored access token, validate it against
-  // the backend; otherwise start unauthenticated. Critically, a network failure here
-  // (server unreachable, brief connectivity blip) must NOT clear the stored session —
-  // only a genuine auth rejection (401, meaning the interceptor already tried to refresh
-  // and the backend rejected that too) should log the vendor out. Losing this distinction
-  // was why reopening the app after a moment offline forced a fresh login even though the
-  // session was still perfectly valid.
+  // the backend; otherwise start unauthenticated. A network failure here must NOT clear
+  // the stored session — only a genuine auth rejection (401, meaning the interceptor
+  // already tried to refresh and the backend rejected that too) logs the vendor out.
+  // On network failure `restoreFailed` is set so Splash can offer a retry.
+  const restoreSession = useCallback(async () => {
+    const token = await AsyncStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!token) {
+      setRestoreFailed(false);
+      return;
+    }
+
+    for (let attempt = 0; attempt <= SESSION_RESTORE_RETRIES; attempt++) {
+      try {
+        await refreshVendor();
+        setRestoreFailed(false);
+        return;
+      } catch (err) {
+        const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+        if (status === 401) {
+          await clearSession();
+          setRestoreFailed(false);
+          return;
+        }
+        if (attempt === SESSION_RESTORE_RETRIES) {
+          setRestoreFailed(true);
+          return;
+        }
+        await sleep(SESSION_RESTORE_RETRY_DELAY_MS);
+      }
+    }
+  }, [refreshVendor, clearSession]);
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const token = await AsyncStorage.getItem(ACCESS_TOKEN_KEY);
-      if (!token) {
+    restoreSession()
+      .catch(() => {
+        if (!cancelled) setRestoreFailed(true);
+      })
+      .finally(() => {
         if (!cancelled) setIsLoading(false);
-        return;
-      }
-
-      for (let attempt = 0; attempt <= SESSION_RESTORE_RETRIES; attempt++) {
-        try {
-          await refreshVendor();
-          break;
-        } catch (err) {
-          const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-          if (status === 401) {
-            if (!cancelled) await clearSession();
-            break;
-          }
-          if (attempt === SESSION_RESTORE_RETRIES) {
-            // Couldn't reach the server after retrying — keep the stored tokens (they're
-            // likely still valid) rather than forcing a fresh login over a network problem.
-            break;
-          }
-          await sleep(SESSION_RESTORE_RETRY_DELAY_MS);
-        }
-      }
-      if (!cancelled) setIsLoading(false);
-    })();
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const retryRestore = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await restoreSession();
+    } catch {
+      setRestoreFailed(true);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [restoreSession]);
 
   const requestOtp = useCallback(async (phone: string) => {
     const { data } = await api.post<{ message: string; devOtp?: string }>('/vendor/auth/otp/request', {
@@ -188,6 +219,8 @@ export function VendorAuthProvider({ children }: { children: React.ReactNode }) 
       vendor,
       isAuthenticated: Boolean(vendor),
       isLoading,
+      restoreFailed,
+      retryRestore,
       requestOtp,
       verifyOtp,
       register,
@@ -196,7 +229,7 @@ export function VendorAuthProvider({ children }: { children: React.ReactNode }) 
       logout,
       refreshVendor,
     }),
-    [vendor, isLoading, requestOtp, verifyOtp, register, login, resetPassword, logout, refreshVendor],
+    [vendor, isLoading, restoreFailed, retryRestore, requestOtp, verifyOtp, register, login, resetPassword, logout, refreshVendor],
   );
 
   return <VendorAuthContext.Provider value={value}>{children}</VendorAuthContext.Provider>;

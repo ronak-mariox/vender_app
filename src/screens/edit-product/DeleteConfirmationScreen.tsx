@@ -36,7 +36,7 @@ export function DeleteConfirmationScreen({ navigation, route }: Props) {
 
           <View style={styles.detailsCard}>
             <DetailRow label="Product" value={productName} />
-            <DetailRow label="SKU" value={sku} />
+            <DetailRow label="SKU" value={sku || '—'} />
             <DetailRow label="Deleted at" value={deletedAt} last />
           </View>
         </View>
@@ -44,12 +44,18 @@ export function DeleteConfirmationScreen({ navigation, route }: Props) {
         <View style={styles.footer}>
           <Button
             label="View My Products"
-            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'ProductCatalog' }] })}
+            onPress={() => {
+              navigation.popToTop();
+              navigation.navigate('ProductCatalog');
+            }}
           />
           <Button
             label="Go to Dashboard"
             variant="outline"
-            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] })}
+            onPress={() => {
+              navigation.popToTop();
+              navigation.navigate('Dashboard');
+            }}
           />
         </View>
       </ScrollView>

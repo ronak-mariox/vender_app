@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -9,20 +9,14 @@ import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { useInventory } from '../../context/InventoryContext';
 import { getApiErrorMessage } from '../../services/api';
 import { type FormErrors } from '../../utils/validators';
+import { STOCK_REASONS } from '../../utils/inventory';
+import { NoVariantsState, VariantPicker, primaryVariantId, stockTypeForReason } from '../inventory/VariantPicker';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'EditStock'>;
 
 type Errors = FormErrors<'count'>;
-
-const REASONS = [
-  'New Stock Purchase',
-  'Return from Customer',
-  'Manual Count Correction',
-  'Damage / Expiry Removal',
-  'Transfer from Branch',
-  'Other',
-];
 
 export function EditStockScreen({ navigation, route }: Props) {
   const { productId } = route.params;
@@ -30,8 +24,10 @@ export function EditStockScreen({ navigation, route }: Props) {
   const { recordStockChange } = useInventory();
   const product = products.find(item => item.id === productId);
 
-  const [newCount, setNewCount] = useState(product?.stock ?? 0);
-  const [reason, setReason] = useState(REASONS[0]);
+  const [variantId, setVariantId] = useState<string | null>(primaryVariantId(product?.variants));
+  const variant = product?.variants?.find(item => item.id === variantId);
+  const [newCountText, setNewCountText] = useState(String(variant?.stock ?? 0));
+  const [reason, setReason] = useState(STOCK_REASONS[0]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
@@ -44,13 +40,30 @@ export function EditStockScreen({ navigation, route }: Props) {
     );
   }
 
-  const delta = newCount - product.stock;
+  const currentStock = variant?.stock ?? 0;
+  const newCount = parseInt(newCountText, 10) || 0;
+  const delta = newCount - currentStock;
+
+  function selectVariant(id: string) {
+    setVariantId(id);
+    setNewCountText(String(product?.variants?.find(item => item.id === id)?.stock ?? 0));
+    setErrors({});
+  }
+
+  function setCount(value: number) {
+    setNewCountText(String(Math.max(0, value)));
+    if (errors.count) setErrors({});
+  }
 
   async function handleUpdate() {
     if (saving) return;
 
     const nextErrors: Errors = {};
-    if (delta === 0) {
+    if (!variant) {
+      nextErrors.form = 'This product has no variant to update';
+    } else if (!/^\d+$/.test(newCountText.trim())) {
+      nextErrors.count = 'Enter a whole number of units';
+    } else if (delta === 0) {
       nextErrors.count = 'Change the stock count to record an update';
     }
     setErrors(nextErrors);
@@ -60,12 +73,13 @@ export function EditStockScreen({ navigation, route }: Props) {
     try {
       const result = await recordStockChange({
         productId,
+        variantId: variant!.id,
         newStock: newCount,
         reason,
-        type: delta >= 0 ? 'purchase' : 'adjustment',
+        type: stockTypeForReason(reason, delta),
         reference: notes.trim() || undefined,
       });
-      if (result?.wentOutOfStock) {
+      if (result.wentOutOfStock) {
         navigation.replace('OOSConfirmation', { productId });
       } else {
         navigation.goBack();
@@ -83,16 +97,23 @@ export function EditStockScreen({ navigation, route }: Props) {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <View style={styles.productRow}>
-            <View style={styles.productIcon}>
-              <Icon name="package" size={18} color={colors.primary} />
-            </View>
+            <ProductThumb
+              imageUrl={product.images?.[0]}
+              style={styles.productIcon}
+              iconSize={18}
+              iconColor={colors.primary}
+            />
             <View>
               <Text style={styles.productName}>{product.name}</Text>
               <Text style={styles.productMeta}>
-                Current: <Text style={styles.productMetaBold}>{product.stock} units</Text>
+                Current{variant && (product.variants?.length ?? 0) > 1 ? ` (${variant.size})` : ''}:{' '}
+                <Text style={styles.productMetaBold}>{currentStock} units</Text>
               </Text>
             </View>
           </View>
+
+          {!variant ? <NoVariantsState /> : null}
+          <VariantPicker variants={product.variants ?? []} selectedId={variantId} onSelect={selectVariant} />
 
           <View style={styles.stepperBlock}>
             <View style={styles.labelRow}>
@@ -102,20 +123,22 @@ export function EditStockScreen({ navigation, route }: Props) {
             <View style={[styles.stepperField, errors.count && styles.stepperFieldError]}>
               <Pressable
                 style={styles.stepperButton}
-                onPress={() => {
-                  setNewCount(value => Math.max(0, value - 1));
-                  if (errors.count) setErrors({});
-                }}
+                onPress={() => setCount(newCount - 1)}
               >
                 <Icon name="minus" size={18} color={colors.textPrimary} />
               </Pressable>
-              <Text style={styles.stepperValue}>{newCount}</Text>
-              <Pressable
-                style={[styles.stepperButton, styles.stepperButtonAdd]}
-                onPress={() => {
-                  setNewCount(value => value + 1);
+              <TextInput
+                value={newCountText}
+                onChangeText={text => {
+                  setNewCountText(text.replace(/[^0-9]/g, ''));
                   if (errors.count) setErrors({});
                 }}
+                keyboardType="number-pad"
+                style={styles.stepperValue}
+              />
+              <Pressable
+                style={[styles.stepperButton, styles.stepperButtonAdd]}
+                onPress={() => setCount(newCount + 1)}
               >
                 <Icon name="plus" size={18} color={colors.primary} />
               </Pressable>
@@ -129,7 +152,7 @@ export function EditStockScreen({ navigation, route }: Props) {
               <Text style={styles.deltaText}>
                 {delta > 0 ? 'Adding ' : 'Removing '}
                 <Text style={styles.deltaBold}>{Math.abs(delta)} units</Text>
-                {delta > 0 ? ' to' : ' from'} current stock of {product.stock} →{' '}
+                {delta > 0 ? ' to' : ' from'} current stock of {currentStock} →{' '}
                 <Text style={styles.deltaBold}>{newCount} units</Text>
               </Text>
             </View>
@@ -138,12 +161,12 @@ export function EditStockScreen({ navigation, route }: Props) {
 
         <View style={styles.card}>
           <Text style={styles.reasonTitle}>Adjustment Reason</Text>
-          {REASONS.map((option, index) => {
+          {STOCK_REASONS.map((option, index) => {
             const selected = option === reason;
             return (
               <Pressable
                 key={option}
-                style={[styles.reasonRow, index < REASONS.length - 1 && styles.reasonRowDivider]}
+                style={[styles.reasonRow, index < STOCK_REASONS.length - 1 && styles.reasonRowDivider]}
                 onPress={() => setReason(option)}
               >
                 <View style={[styles.radioOuter, selected && styles.radioOuterActive]}>
@@ -159,13 +182,13 @@ export function EditStockScreen({ navigation, route }: Props) {
           label="Notes (Optional)"
           value={notes}
           onChangeText={setNotes}
-          placeholder="e.g. Invoice #INV-2024-0891"
+          placeholder="e.g. supplier invoice number"
         />
 
         {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}
 
         <View style={styles.footer}>
-          <Button label="Update Stock" onPress={handleUpdate} loading={saving} disabled={saving} />
+          <Button label="Update Stock" onPress={handleUpdate} loading={saving} disabled={saving || !variant} />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -260,6 +283,7 @@ const styles = StyleSheet.create({
   },
   stepperValue: {
     flex: 1,
+    padding: 0,
     textAlign: 'center',
     fontSize: 32,
     fontFamily: fontFamilies.extrabold,

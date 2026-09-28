@@ -33,7 +33,7 @@ export function ProfileReplaceDocumentScreen({ navigation, route }: Props) {
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (!document) {
+  if (!document || documentId === 'bankDetails') {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <NavHeader title="Replace Document" onBack={() => navigation.goBack()} />
@@ -85,7 +85,7 @@ export function ProfileReplaceDocumentScreen({ navigation, route }: Props) {
             <Icon name="alert-triangle" size={14} color={colors.warningDark} />
             <Text style={styles.warningText}>
               Replacing a {document.status === 'verified' ? 'verified' : 'submitted'} document requires
-              re-verification (1–3 business days).
+              re-verification by our team.
             </Text>
           </View>
         </View>

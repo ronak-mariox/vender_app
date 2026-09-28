@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon, IconName } from '../icons/Icon';
 import { colors, radii, spacing, typography } from '../theme';
 
@@ -10,8 +10,8 @@ type Props = {
   value: string;
   label: string;
   sublabel: string;
-  trend?: string;
   muted?: boolean;
+  onPress?: () => void;
 };
 
 export function MetricCard({
@@ -21,26 +21,21 @@ export function MetricCard({
   value,
   label,
   sublabel,
-  trend,
   muted = false,
+  onPress,
 }: Props) {
   return (
-    <View style={styles.card}>
+    <Pressable style={styles.card} onPress={onPress} disabled={!onPress}>
       <View style={styles.header}>
         <View style={[styles.iconWrapper, { backgroundColor: muted ? colors.surface : iconBackground }]}>
           <Icon name={icon} size={16} color={muted ? colors.textSecondary : iconColor} />
         </View>
-        {trend ? (
-          <View style={styles.trendRow}>
-            <Icon name="trending-up" size={10} color={colors.primary} />
-            <Text style={styles.trendText}>{trend}</Text>
-          </View>
-        ) : null}
+        {onPress ? <Icon name="chevron-right" size={14} color={colors.textTertiary} /> : null}
       </View>
       <Text style={[styles.value, muted && styles.valueMuted]}>{value}</Text>
       <Text style={styles.label}>{label}</Text>
       <Text style={styles.sublabel}>{sublabel}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -65,16 +60,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  trendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  trendText: {
-    ...typography.tinyBold,
-    fontSize: 10,
-    color: colors.primary,
   },
   value: {
     ...typography.h2,

@@ -1,32 +1,33 @@
 import React from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, InfoBanner, NavHeader, ScreenContainer } from '../../components';
+import { Button, NavHeader, ScreenContainer } from '../../components';
 import { DetailCard, DetailRow } from './DetailCard';
 import { NotificationHero } from './NotificationHero';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
+import { useNotificationOrder } from './useNotificationOrder';
 import { useNotifications } from '../../context/NotificationsContext';
-import { useOrders } from '../../context/OrdersContext';
+import type { Order } from '../../context/OrdersContext';
+import { formatMoney, openOrder } from '../orders/orderHelpers';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OrderCancellationNotification'>;
 
-const FALLBACK_REASON = 'Changed mind.';
-const FALLBACK_VALUE = '₹312';
-const FALLBACK_CANCELLED_BY = 'Customer';
-
-function formatCancelledBy(value: 'customer' | 'vendor') {
-  return value === 'customer' ? 'Customer' : 'Vendor (You)';
-}
+const CANCELLED_BY_LABEL: Record<NonNullable<Order['cancelledBy']>, string> = {
+  customer: 'Customer',
+  vendor: 'Vendor (You)',
+  admin: 'Platform support',
+  driver: 'Delivery partner',
+};
 
 export function OrderCancellationNotificationScreen({ navigation, route }: Props) {
   const { notificationId } = route.params;
   const { getNotification, dismissNotification } = useNotifications();
-  const { getOrder } = useOrders();
 
   const notification = getNotification(notificationId);
-  const order = notification?.orderId ? getOrder(notification.orderId) : undefined;
+  const { order, loading, error } = useNotificationOrder(notification?.orderId);
 
   if (!notification) {
     return (
@@ -39,10 +40,13 @@ export function OrderCancellationNotificationScreen({ navigation, route }: Props
     );
   }
 
-  const meta = NOTIFICATION_CATEGORY_META[notification.category];
-  const reason = order?.cancelReason ?? FALLBACK_REASON;
-  const value = order ? `₹${order.amount}` : FALLBACK_VALUE;
-  const cancelledBy = order?.cancelledBy ? formatCancelledBy(order.cancelledBy) : FALLBACK_CANCELLED_BY;
+  const meta = getNotificationMeta(notification.category);
+
+  function handleDismiss() {
+    dismissNotification(notificationId)
+      .then(() => navigation.goBack())
+      .catch(err => Alert.alert('Could not dismiss', getApiErrorMessage(err, 'Please try again.')));
+  }
 
   return (
     <ScreenContainer backgroundColor={colors.white} scrollable>
@@ -56,39 +60,30 @@ export function OrderCancellationNotificationScreen({ navigation, route }: Props
         timeLabel={notification.timeLabel}
       />
       <View style={styles.content}>
-        <DetailCard>
-          <DetailRow label="Cancellation Reason" value={reason} />
-          <DetailRow label="Order Value" value={value} />
-          <DetailRow label="Cancelled by" value={cancelledBy} />
-        </DetailCard>
-
-        <InfoBanner
-          variant="success"
-          title="No Impact on Your Account"
-          message="Your acceptance rate is not affected by customer-initiated cancellations."
-        />
-
-        <InfoBanner variant="neutral" message="Stock has been automatically restored to inventory." />
+        {order ? (
+          <DetailCard>
+            <DetailRow label="Order" value={order.orderNumber} />
+            {order.cancelReason ? <DetailRow label="Cancellation Reason" value={order.cancelReason} /> : null}
+            <DetailRow label="Order Value" value={formatMoney(order.amount)} />
+            {order.cancelledBy ? (
+              <DetailRow label="Cancelled by" value={CANCELLED_BY_LABEL[order.cancelledBy]} />
+            ) : null}
+          </DetailCard>
+        ) : loading ? (
+          <ActivityIndicator color={colors.primary} />
+        ) : error ? (
+          <Text style={styles.emptyText}>{error}</Text>
+        ) : null}
 
         <Button
           label="View Order Details"
           variant="outline"
+          disabled={!order}
           onPress={() => {
-            if (notification.orderId) {
-              navigation.navigate('CancelledOrderDetails', { orderId: notification.orderId });
-            } else {
-              Alert.alert('Order unavailable', 'This notification is not linked to an order.');
-            }
+            if (order) openOrder(navigation, order);
           }}
         />
-        <Button
-          label="Dismiss"
-          variant="text"
-          onPress={() => {
-            dismissNotification(notificationId);
-            navigation.goBack();
-          }}
-        />
+        <Button label="Dismiss" variant="text" onPress={handleDismiss} />
       </View>
     </ScreenContainer>
   );

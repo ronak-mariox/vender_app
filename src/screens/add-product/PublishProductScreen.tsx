@@ -5,23 +5,27 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Badge, Button, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { packSizeLabel, useProductDraft, usesVariantPricing } from '../../context/ProductDraftContext';
 import { getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PublishProduct'>;
 
-const AFTER_PUBLISHING = [
-  { icon: 'globe' as const, text: 'Visible to customers on Verdant' },
-  { icon: 'package' as const, text: 'Can receive orders immediately' },
-  { icon: 'bell' as const, text: 'Category team will review within 24h' },
-  { icon: 'check-circle' as const, text: 'Status changes to Active after approval' },
+const AFTER_SUBMITTING = [
+  { icon: 'clock' as const, text: 'Your product is sent to the admin team for review' },
+  { icon: 'bell' as const, text: "You'll get a notification when it's approved or rejected" },
+  { icon: 'globe' as const, text: 'Customers can see and order it once approved' },
 ];
 
 export function PublishProductScreen({ navigation }: Props) {
   const { draft, effectivePricing, publishDraft } = useProductDraft();
   const basicInfo = draft.basicInfo;
-  const packSize = draft.packSize ? `${draft.packSize.netWeight}${draft.packSize.unit.split(' ')[0]}` : '—';
+  const perVariant = usesVariantPricing(draft.packSize);
+  const sizeLabel = perVariant ? `${draft.packSize?.variants.length ?? 0} variants` : packSizeLabel(draft.packSize) || '—';
+  const stockCount = perVariant
+    ? (draft.packSize?.variants ?? []).reduce((sum, variant) => sum + (parseInt(variant.stock, 10) || 0), 0)
+    : parseInt(draft.stock?.opening ?? '', 10) || 0;
   const [publishing, setPublishing] = useState(false);
 
   async function handlePublishNow() {
@@ -31,17 +35,10 @@ export function PublishProductScreen({ navigation }: Props) {
       await publishDraft();
       navigation.replace('PublishSuccess');
     } catch (err) {
-      Alert.alert('Could not publish product', getApiErrorMessage(err));
+      Alert.alert('Could not submit product', getApiErrorMessage(err));
     } finally {
       setPublishing(false);
     }
-  }
-
-  function handleSaveDraft() {
-    // There's no backend concept of an unsubmitted draft product — only "Publish Now" creates
-    // a real product server-side. Saving as a draft just keeps the in-progress wizard state
-    // around locally (so the vendor can resume it later) without calling the API.
-    navigation.reset({ index: 0, routes: [{ name: 'ProductCatalog' }] });
   }
 
   return (
@@ -49,24 +46,27 @@ export function PublishProductScreen({ navigation }: Props) {
       <NavHeader title="Publish Product" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.summaryCard}>
-          <View style={styles.summaryIcon}>
-            <Icon name="package" size={24} color={colors.textTertiary} />
-          </View>
+          <ProductThumb
+            imageUrl={draft.images.images[0]}
+            style={styles.summaryIcon}
+            iconSize={24}
+            iconColor={colors.textTertiary}
+          />
           <View style={styles.summaryTextColumn}>
-            <Text style={styles.summaryName}>{basicInfo?.name || 'Untitled Product'}</Text>
+            <Text style={styles.summaryName}>{basicInfo?.name || '—'}</Text>
             <Text style={styles.summaryMeta}>
-              {packSize} · ₹{effectivePricing?.sellingPrice || 0} · {draft.stock?.opening ?? 0} in stock
+              {sizeLabel} · ₹{effectivePricing?.sellingPrice || 0} · {stockCount} in stock
             </Text>
             <View style={styles.badgeWrapper}>
-              <Badge label="Draft" tone="info" />
+              <Badge label="Not submitted" tone="info" />
             </View>
           </View>
         </View>
 
         <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>After Publishing</Text>
-          {AFTER_PUBLISHING.map((item, index) => (
-            <View key={item.text} style={[styles.infoRow, index < AFTER_PUBLISHING.length - 1 && styles.infoRowDivider]}>
+          <Text style={styles.infoTitle}>After Submitting</Text>
+          {AFTER_SUBMITTING.map((item, index) => (
+            <View key={item.text} style={[styles.infoRow, index < AFTER_SUBMITTING.length - 1 && styles.infoRowDivider]}>
               <Icon name={item.icon} size={16} color={colors.primary} />
               <Text style={styles.infoText}>{item.text}</Text>
             </View>
@@ -74,14 +74,7 @@ export function PublishProductScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.footer}>
-          <Button label="Publish Now" onPress={handlePublishNow} loading={publishing} disabled={publishing} />
-          <Button label="Save as Draft" variant="outline" onPress={handleSaveDraft} disabled={publishing} />
-          <Button
-            label="Schedule for later"
-            variant="text"
-            onPress={() => Alert.alert('Schedule for later', 'Coming soon.')}
-            disabled={publishing}
-          />
+          <Button label="Submit for Review" onPress={handlePublishNow} loading={publishing} disabled={publishing} />
         </View>
       </ScrollView>
     </SafeAreaView>

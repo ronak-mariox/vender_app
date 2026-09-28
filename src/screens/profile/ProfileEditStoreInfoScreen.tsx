@@ -7,6 +7,7 @@ import { Icon } from '../../icons/Icon';
 import { useProfile } from '../../context/ProfileContext';
 import { isRequired, type FormErrors } from '../../utils/validators';
 import { resolveAssetUrl } from '../../utils/resolveAssetUrl';
+import { getApiErrorMessage, getFieldErrors } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileEditStoreInfo'>;
@@ -39,8 +40,8 @@ export function ProfileEditStoreInfoScreen({ navigation }: Props) {
     setIsUploadingLogo(true);
     try {
       await updateStoreLogo('gallery');
-    } catch {
-      setErrors(prev => ({ ...prev, form: 'Could not update logo — please try again.' }));
+    } catch (err) {
+      setErrors(prev => ({ ...prev, form: getApiErrorMessage(err, 'Could not update logo.') }));
     } finally {
       setIsUploadingLogo(false);
     }
@@ -51,8 +52,8 @@ export function ProfileEditStoreInfoScreen({ navigation }: Props) {
     setIsUploadingCover(true);
     try {
       await updateStoreCover('gallery');
-    } catch {
-      setErrors(prev => ({ ...prev, form: 'Could not update cover image — please try again.' }));
+    } catch (err) {
+      setErrors(prev => ({ ...prev, form: getApiErrorMessage(err, 'Could not update cover image.') }));
     } finally {
       setIsUploadingCover(false);
     }
@@ -83,8 +84,13 @@ export function ProfileEditStoreInfoScreen({ navigation }: Props) {
         avgPrepTime: avgPrepTime.trim() ? Number(avgPrepTime) : null,
       });
       navigation.goBack();
-    } catch {
-      setErrors({ form: 'Could not save store details — please check your connection and try again.' });
+    } catch (err) {
+      const fieldErrors = getFieldErrors(err);
+      setErrors({
+        storeName: fieldErrors.storeName,
+        contactNumber: fieldErrors.contactNumber,
+        form: getApiErrorMessage(err, 'Could not save store details.'),
+      });
     } finally {
       setIsSaving(false);
     }

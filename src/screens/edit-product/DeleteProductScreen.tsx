@@ -8,15 +8,14 @@ import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'DeleteProduct'>;
 
 const DELETE_ITEMS = [
   'Product listing and all details',
-  'All product images',
-  'Price and discount settings',
-  'Sales history and analytics',
-  'Customer reviews (if any)',
+  'Product images, variants and prices',
+  'Current stock levels',
 ];
 
 export function DeleteProductScreen({ navigation, route }: Props) {
@@ -57,23 +56,26 @@ export function DeleteProductScreen({ navigation, route }: Props) {
           </View>
           <Text style={styles.heading}>Delete Product?</Text>
           <Text style={styles.subtitle}>
-            This action is permanent and cannot be undone. All product data will be lost.
+            This action is permanent and cannot be undone. Past orders keep their own record of this item.
           </Text>
 
           <View style={styles.summaryCard}>
-            <View style={styles.summaryIcon}>
-              <Icon name="package" size={20} color={colors.error} />
-            </View>
+            <ProductThumb
+              imageUrl={product.images?.[0]}
+              style={styles.summaryIcon}
+              iconSize={20}
+              iconColor={colors.error}
+            />
             <View style={styles.summaryTextColumn}>
               <Text style={styles.summaryName}>{product.name}</Text>
               <Text style={styles.summaryMeta}>
-                SKU: {product.sku} · {product.stock} units in stock
+                SKU: {product.sku || '—'} · {product.stock} units in stock
               </Text>
             </View>
           </View>
 
           <View style={styles.deleteCard}>
-            <Text style={styles.deleteTitle}>Everything will be permanently deleted:</Text>
+            <Text style={styles.deleteTitle}>This will be permanently deleted:</Text>
             {DELETE_ITEMS.map(item => (
               <View key={item} style={styles.deleteRow}>
                 <Icon name="x" size={13} color={colors.error} />

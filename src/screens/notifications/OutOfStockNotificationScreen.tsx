@@ -5,16 +5,12 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, InfoBanner, NavHeader, ScreenContainer } from '../../components';
 import { DetailCard, DetailRow } from './DetailCard';
 import { NotificationHero } from './NotificationHero';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
 import { useNotifications } from '../../context/NotificationsContext';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OutOfStockNotification'>;
-
-const FALLBACK_PRODUCT_NAME = 'Tata Salt 1kg';
-const FALLBACK_MISSED_ORDERS = '12 / day';
-const FALLBACK_LOST_REVENUE = '₹348 / day';
 
 export function OutOfStockNotificationScreen({ navigation, route }: Props) {
   const { notificationId } = route.params;
@@ -22,8 +18,8 @@ export function OutOfStockNotificationScreen({ navigation, route }: Props) {
   const { products } = useProductCatalog();
 
   const notification = getNotification(notificationId);
-  const matchedProduct = notification?.productName
-    ? products.find(product => product.name === notification.productName)
+  const matchedProduct = notification?.productId
+    ? products.find(product => product.id === notification.productId)
     : undefined;
 
   if (!notification) {
@@ -37,14 +33,14 @@ export function OutOfStockNotificationScreen({ navigation, route }: Props) {
     );
   }
 
-  const meta = NOTIFICATION_CATEGORY_META[notification.category];
-  const productName = matchedProduct?.name ?? notification.productName ?? FALLBACK_PRODUCT_NAME;
+  const meta = getNotificationMeta(notification.category);
+  const productName = matchedProduct?.name ?? notification.productName ?? 'This product';
 
   function handleAddStock() {
     if (matchedProduct) {
       navigation.navigate('UpdateQuantity', { productId: matchedProduct.id });
     } else {
-      Alert.alert('Product not found', `We couldn't find "${productName}" in your catalog.`);
+      Alert.alert('Product not found', `"${productName}" is no longer in your catalog.`);
     }
   }
 
@@ -52,7 +48,7 @@ export function OutOfStockNotificationScreen({ navigation, route }: Props) {
     if (matchedProduct) {
       navigation.navigate('DeactivateProduct', { productId: matchedProduct.id });
     } else {
-      Alert.alert('Product not found', `We couldn't find "${productName}" in your catalog.`);
+      Alert.alert('Product not found', `"${productName}" is no longer in your catalog.`);
     }
   }
 
@@ -71,19 +67,26 @@ export function OutOfStockNotificationScreen({ navigation, route }: Props) {
         <View style={styles.urgencyDot} pointerEvents="none" />
       </View>
       <View style={styles.content}>
-        <InfoBanner variant="error" message="This product is hidden from customers until restocked." />
-
-        <DetailCard title="Estimated Impact">
-          <DetailRow label="Est. missed orders" value={FALLBACK_MISSED_ORDERS} />
-          <DetailRow label="Est. lost revenue" value={FALLBACK_LOST_REVENUE} bold />
-        </DetailCard>
+        {matchedProduct ? (
+          <DetailCard>
+            <DetailRow label="Product" value={matchedProduct.name} />
+            <DetailRow label="Current Stock" value={`${matchedProduct.stock} units`} bold />
+          </DetailCard>
+        ) : (
+          <InfoBanner variant="neutral" message={`${productName} is no longer in your catalog.`} />
+        )}
 
         <View style={styles.footerRow}>
           <View style={styles.footerButton}>
-            <Button label="Add Stock Now" onPress={handleAddStock} />
+            <Button label="Add Stock Now" onPress={handleAddStock} disabled={!matchedProduct} />
           </View>
           <View style={styles.footerButton}>
-            <Button label="Mark Unavailable" variant="outline" onPress={handleMarkUnavailable} />
+            <Button
+              label="Mark Unavailable"
+              variant="outline"
+              onPress={handleMarkUnavailable}
+              disabled={!matchedProduct}
+            />
           </View>
         </View>
       </View>

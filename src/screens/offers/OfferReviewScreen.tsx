@@ -4,60 +4,52 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, Checkbox, ScreenContainer } from '../../components';
 import { useOfferDraft } from '../../context/OfferDraftContext';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { OfferWizardHeader } from './OfferWizardHeader';
+import {
+  formatINR,
+  formatOfferDateTime,
+  offerEligibleProductCount,
+  offerScopeLabel,
+  offerTypeLabel,
+} from './offerFormat';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OfferReview'>;
 
-function formatINR(value: number): string {
-  return `₹${Math.round(value).toLocaleString('en-IN')}`;
-}
-
 export function OfferReviewScreen({ navigation }: Props) {
-  const { draft, setReviewConfirmed, computedDurationLabel } = useOfferDraft();
+  const { draft, setReviewConfirmed, validate } = useOfferDraft();
+  const { products, categories } = useProductCatalog();
+  const errors = validate();
+  const errorMessages = Object.values(errors).filter((msg): msg is string => Boolean(msg));
 
-  const offerName = draft.type?.name || 'Untitled Offer';
-  const discountType = draft.type?.discountType ?? 'percentage';
-  const discountValue = draft.discountValue.value;
-  const typeLabel =
-    discountType === 'flat' ? `₹${discountValue} Fixed Amount Off` : `${discountValue}% Percentage Discount`;
-
-  const productCount = draft.products?.productCount ?? 0;
-  const categoryLabel = draft.products?.categoryLabel ?? 'Entire Store';
-  const productsLabel = `${categoryLabel} · ${productCount} products`;
-
-  const durationLabel = computedDurationLabel() || 'Not set';
-
-  const estimatedReach = Math.max(50, Math.round(productCount * 6.67));
-
-  const expectedOrders = Math.max(1, Math.round(productCount * 1.75));
-  const avgOrderValue = 245;
-  const estimatedRevenue = expectedOrders * avgOrderValue;
-  const avgDiscount =
-    discountType === 'flat' ? discountValue : Math.round(((avgOrderValue * discountValue) / 100) * 100) / 100;
+  const coveredCount = offerEligibleProductCount(draft, products);
+  const productsLabel = `${offerScopeLabel(draft, products, categories)} · ${coveredCount} product${coveredCount === 1 ? '' : 's'}`;
+  const startLabel = draft.startImmediately ? 'Immediately on publish' : formatOfferDateTime(draft.startDate);
 
   const summaryRows = [
-    { label: 'Offer Name', value: offerName },
-    { label: 'Type', value: typeLabel },
+    { label: 'Offer Name', value: draft.title || 'Untitled Offer' },
+    { label: 'Type', value: offerTypeLabel(draft) },
     { label: 'Products', value: productsLabel },
-    { label: 'Duration', value: durationLabel },
-    { label: 'Est. Reach', value: `${estimatedReach} customers` },
+    {
+      label: 'Min. Order',
+      value: draft.minOrderValueEnabled ? formatINR(draft.minOrderValue) : 'None',
+    },
+    { label: 'Customers', value: draft.customerEligibility === 'new-only' ? 'New customers only' : 'All customers' },
+    { label: 'Starts', value: startLabel },
+    { label: 'Ends', value: formatOfferDateTime(draft.endDate) },
   ];
 
-  const impactStats = [
-    { label: 'Expected orders', value: `${expectedOrders}` },
-    { label: 'Est. revenue', value: formatINR(estimatedRevenue) },
-    { label: 'Avg discount', value: `₹${avgDiscount.toFixed(2)}` },
-  ];
+  const canPublish = draft.reviewConfirmed && errorMessages.length === 0;
 
   function handlePublish() {
-    if (!draft.reviewConfirmed) return;
+    if (!canPublish) return;
     navigation.navigate('PublishOffer');
   }
 
   return (
     <ScreenContainer scrollable={false} backgroundColor={colors.white}>
-      <OfferWizardHeader title="Review Offer" step={5} onBack={() => navigation.goBack()} />
+      <OfferWizardHeader title={draft.editingOfferId ? 'Review Changes' : 'Review Offer'} step={5} onBack={() => navigation.goBack()} />
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.summaryCard}>
           <Text style={styles.summaryHeading}>Offer Summary</Text>
@@ -71,17 +63,15 @@ export function OfferReviewScreen({ navigation }: Props) {
           ))}
         </View>
 
-        <View style={styles.impactCard}>
-          <Text style={styles.impactHeading}>Estimated Impact</Text>
-          <View style={styles.impactGrid}>
-            {impactStats.map(stat => (
-              <View key={stat.label} style={styles.impactTile}>
-                <Text style={styles.impactValue}>{stat.value}</Text>
-                <Text style={styles.impactLabel}>{stat.label}</Text>
-              </View>
+        {errorMessages.length > 0 ? (
+          <View style={styles.errorCard}>
+            {errorMessages.map(message => (
+              <Text key={message} style={styles.errorText}>
+                • {message}
+              </Text>
             ))}
           </View>
-        </View>
+        ) : null}
 
         <View style={styles.confirmRow}>
           <Checkbox checked={draft.reviewConfirmed} onToggle={setReviewConfirmed} />
@@ -92,13 +82,24 @@ export function OfferReviewScreen({ navigation }: Props) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button label="Publish Offer" onPress={handlePublish} disabled={!draft.reviewConfirmed} />
+        <Button label={draft.editingOfferId ? 'Save Changes' : 'Publish Offer'} onPress={handlePublish} disabled={!canPublish} />
       </View>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  errorCard: {
+    backgroundColor: colors.errorSurface,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.xs,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+  },
   scrollArea: {
     flex: 1,
   },
@@ -140,41 +141,6 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     flexShrink: 1,
     textAlign: 'right',
-  },
-  impactCard: {
-    backgroundColor: colors.primarySurface,
-    borderWidth: 1,
-    borderColor: colors.primaryBorder,
-    borderRadius: radii.md,
-    padding: spacing.xl,
-  },
-  impactHeading: {
-    ...typography.labelSemibold,
-    color: colors.primary,
-  },
-  impactGrid: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    paddingTop: spacing.lg,
-  },
-  impactTile: {
-    flex: 1,
-    backgroundColor: colors.white,
-    borderRadius: radii.sm,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xs,
-    alignItems: 'center',
-    gap: 2,
-  },
-  impactValue: {
-    ...typography.captionBold,
-    color: colors.primary,
-  },
-  impactLabel: {
-    ...typography.tiny,
-    fontSize: 10,
-    color: '#047857',
-    textAlign: 'center',
   },
   confirmRow: {
     flexDirection: 'row',

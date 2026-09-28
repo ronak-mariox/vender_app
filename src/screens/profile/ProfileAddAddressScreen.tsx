@@ -3,9 +3,10 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { useProfile } from '../../context/ProfileContext';
-import { Badge, Button, Input, NavHeader, ScreenContainer } from '../../components';
+import { Button, Input, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { isRequired, type FormErrors } from '../../utils/validators';
+import { getApiErrorMessage, getFieldErrors } from '../../services/api';
 import { colors, spacing, typography } from '../../theme';
 
 type Errors = FormErrors<'label' | 'line1' | 'line2' | 'lat' | 'lng'>;
@@ -23,7 +24,6 @@ export function ProfileAddAddressScreen({ navigation }: Props) {
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
 
-  const isVerified = isRequired(lat) && isRequired(lng);
 
   async function handleSave() {
     if (saving) return;
@@ -46,8 +46,8 @@ export function ProfileAddAddressScreen({ navigation }: Props) {
         ...(lng.trim() && { lng: Number(lng) }),
       });
       navigation.goBack();
-    } catch {
-      setErrors({ form: 'Could not save address. Please check your connection and try again.' });
+    } catch (err) {
+      setErrors({ ...getFieldErrors(err), form: getApiErrorMessage(err, 'Could not save address.') });
     } finally {
       setSaving(false);
     }
@@ -96,11 +96,6 @@ export function ProfileAddAddressScreen({ navigation }: Props) {
         <View style={styles.mapCard}>
           <View style={styles.mapPreview}>
             <Icon name="pin" size={40} color={colors.primary} />
-            {isVerified ? (
-              <View style={styles.badgeWrapper}>
-                <Badge label="Verified on Map" tone="success" />
-              </View>
-            ) : null}
           </View>
           <View style={styles.mapFields}>
             <Input
@@ -158,11 +153,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  badgeWrapper: {
-    position: 'absolute',
-    top: spacing.lg,
-    right: spacing.lg,
   },
   mapFields: {
     padding: spacing.xl,

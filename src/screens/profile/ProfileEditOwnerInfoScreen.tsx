@@ -6,11 +6,12 @@ import { Button, Input, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProfile } from '../../context/ProfileContext';
 import { isRequired, isValidEmail, isValidMobile, type FormErrors } from '../../utils/validators';
+import { getApiErrorMessage, getFieldErrors } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileEditOwnerInfo'>;
 
-type Errors = FormErrors<'name' | 'phone' | 'email' | 'dateOfBirth'>;
+type Errors = FormErrors<'name' | 'phone' | 'email'>;
 
 export function ProfileEditOwnerInfoScreen({ navigation }: Props) {
   const { profile, updateOwnerInfo } = useProfile();
@@ -19,7 +20,6 @@ export function ProfileEditOwnerInfoScreen({ navigation }: Props) {
   const [name, setName] = useState(owner.name);
   const [phone, setPhone] = useState(owner.phone);
   const [email, setEmail] = useState(owner.email);
-  const [dateOfBirth, setDateOfBirth] = useState(owner.dateOfBirth);
   const [errors, setErrors] = useState<Errors>({});
   const [isSaving, setIsSaving] = useState(false);
 
@@ -38,11 +38,16 @@ export function ProfileEditOwnerInfoScreen({ navigation }: Props) {
         name: name.trim(),
         phone: phone.trim(),
         email: email.trim(),
-        dateOfBirth: dateOfBirth.trim(),
       });
       navigation.goBack();
-    } catch {
-      setErrors({ form: 'Could not save owner details — please check your connection and try again.' });
+    } catch (err) {
+      const fieldErrors = getFieldErrors(err);
+      setErrors({
+        name: fieldErrors.fullName,
+        phone: fieldErrors.mobile,
+        email: fieldErrors.email,
+        form: getApiErrorMessage(err, 'Could not save owner details.'),
+      });
     } finally {
       setIsSaving(false);
     }
@@ -54,8 +59,8 @@ export function ProfileEditOwnerInfoScreen({ navigation }: Props) {
       <View style={styles.body}>
         <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.banner}>
-            <Icon name="lock" size={13} color={colors.primaryDark} />
-            <Text style={styles.bannerText}>Personal information is encrypted and secure.</Text>
+            <Icon name="info" size={13} color={colors.primaryDark} />
+            <Text style={styles.bannerText}>Date of birth is a verified KYC detail and can't be edited here.</Text>
           </View>
 
           <View style={styles.form}>
@@ -91,12 +96,7 @@ export function ProfileEditOwnerInfoScreen({ navigation }: Props) {
               autoCapitalize="none"
               error={errors.email}
             />
-            <Input
-              label="Date of Birth"
-              value={dateOfBirth}
-              onChangeText={setDateOfBirth}
-              placeholder="YYYY-MM-DD"
-            />
+            {owner.dateOfBirth ? <Input label="Date of Birth" value={owner.dateOfBirth} onChangeText={() => {}} editable={false} /> : null}
 
             {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}
           </View>

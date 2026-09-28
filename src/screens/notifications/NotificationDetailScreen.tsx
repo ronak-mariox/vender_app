@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -7,7 +7,10 @@ import { Button, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useNotifications } from '../../context/NotificationsContext';
 import { DetailCard, DetailRow } from './DetailCard';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
+import { useNotificationOrder } from './useNotificationOrder';
+import { openOrder } from '../orders/orderHelpers';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'NotificationDetail'>;
@@ -16,6 +19,7 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
   const { notificationId } = route.params;
   const { notifications, getNotification, dismissNotification } = useNotifications();
   const notification = getNotification(notificationId);
+  const { order } = useNotificationOrder(notification?.orderId);
 
   const currentIndex = useMemo(
     () => notifications.findIndex(item => item.id === notificationId),
@@ -37,8 +41,9 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
   };
 
   const handleDelete = () => {
-    dismissNotification(notificationId);
-    navigation.goBack();
+    dismissNotification(notificationId)
+      .then(() => navigation.goBack())
+      .catch(err => Alert.alert('Could not delete', getApiErrorMessage(err, 'Please try again.')));
   };
 
   if (!notification) {
@@ -52,10 +57,34 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
     );
   }
 
-  const meta = NOTIFICATION_CATEGORY_META[notification.category];
-  const secondaryLine =
-    notification.settlementId || notification.orderId || notification.productName || notification.subtitle;
-  const description = `${notification.title}. ${notification.subtitle}. Received ${notification.timeLabel}. View the full ${meta.label.toLowerCase()} record below for more information.`;
+  const meta = getNotificationMeta(notification.category);
+  const secondaryLine = notification.orderNumber
+    ? `Order ${notification.orderNumber}`
+    : notification.productName;
+  const receivedAt = new Date(notification.createdAt).toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const productId = notification.productId;
+  const action: { label: string; onPress: () => void } | null =
+    meta.route !== 'NotificationDetail'
+      ? {
+          label: `View ${meta.label} Details`,
+          onPress: () =>
+            // Every bespoke notification route takes `{ notificationId }`.
+            (navigation.navigate as (screen: typeof meta.route, params: { notificationId: string }) => void)(
+              meta.route,
+              { notificationId },
+            ),
+        }
+      : order
+        ? { label: 'View Order', onPress: () => openOrder(navigation, order) }
+        : productId
+          ? { label: 'View Product', onPress: () => navigation.navigate('ProductDetails', { productId }) }
+          : null;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -86,31 +115,21 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.descriptionSection}>
-          <Text style={styles.descriptionText}>{description}</Text>
+          <Text style={styles.descriptionText}>{notification.subtitle}</Text>
         </View>
 
         <View style={styles.section}>
           <DetailCard>
-            <DetailRow label="Notification ID" value={notification.id} />
-            <DetailRow label="Received at" value={notification.timeLabel} />
+            <DetailRow label="Received at" value={receivedAt} />
             <DetailRow label="Category" value={meta.label} />
           </DetailCard>
         </View>
 
-        <View style={styles.section}>
-          <Button
-            label={`View ${meta.label} Details`}
-            onPress={() =>
-              // meta.route is typed as `keyof AuthStackParamList` in notificationMeta.ts, which
-              // doesn't correlate the route name to its specific params type — every bespoke
-              // category route in this map happens to take `{ notificationId }`, so this cast is safe.
-              (navigation.navigate as (screen: keyof AuthStackParamList, params: { notificationId: string }) => void)(
-                meta.route,
-                { notificationId },
-              )
-            }
-          />
-        </View>
+        {action ? (
+          <View style={styles.section}>
+            <Button label={action.label} onPress={action.onPress} />
+          </View>
+        ) : null}
 
         <View style={styles.pagerRow}>
           <Pressable

@@ -18,6 +18,7 @@ interface VendorStatusResponse {
   referenceId: string | null;
   rejectionReason: string | null;
   nextStep: RegistrationStepKey | null;
+  storeSetupCompleted?: boolean;
 }
 
 const STEP_SCREEN: Record<RegistrationStepKey, keyof AuthStackParamList> = {
@@ -57,7 +58,9 @@ export async function resolveVendorEntryRoute(): Promise<VendorEntryRoute> {
   }
 
   if (data.status === 'active') {
-    return { name: 'Dashboard' };
+    // Store setup is a hard prerequisite for listing products / taking orders —
+    // an approved vendor who hasn't finished it lands on the setup intro, not the Dashboard.
+    return { name: data.storeSetupCompleted === false ? 'StoreSetupIntro' : 'Dashboard' };
   }
   if (data.status === 'rejected') {
     return { name: 'KYCRejected', params: { rejectionReason: data.rejectionReason ?? undefined } };

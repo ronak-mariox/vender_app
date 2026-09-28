@@ -4,22 +4,43 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
-import { InfoBanner } from '../../components';
-import { useOrders } from '../../context/OrdersContext';
+import type { Order } from '../../context/OrdersContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { FlexButton } from '../order-flow/FlexButton';
+import { formatMoney, statusEventTime, useOrder } from '../orders/orderHelpers';
+import { OrderLoadState } from '../orders/OrderLoadState';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CancelledOrderDetails'>;
 
+const CANCELLED_BY_LABEL: Record<NonNullable<Order['cancelledBy']>, string> = {
+  customer: 'Customer',
+  vendor: 'You (Store)',
+  admin: 'Platform',
+  driver: 'Delivery partner',
+};
+
 export function CancelledOrderDetailsScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const { getOrder } = useOrders();
-  const order = getOrder(orderId);
-  if (!order) return null;
+  const { order, loading, error, retry } = useOrder(orderId);
+  if (!order) {
+    return (
+      <OrderLoadState
+        title="Order Cancelled"
+        loading={loading}
+        error={error}
+        onBack={() => navigation.goBack()}
+        onRetry={retry}
+      />
+    );
+  }
 
-  const cancelledByCustomer = order.cancelledBy !== 'vendor';
-  const cancelledAt = order.statusHistory[order.statusHistory.length - 1]?.time ?? '';
-  const pickingStarted = order.statusHistory.some(event => event.status === 'preparing');
+  const isRejected = order.status === 'rejected';
+  const byLabel = isRejected ? 'You (Store)' : order.cancelledBy ? CANCELLED_BY_LABEL[order.cancelledBy] : '—';
+  const terminalEvent = [...order.statusHistory].reverse().find(event => event.status === order.status);
+  const endedAt = statusEventTime(order, order.status);
+  const reason = order.cancelReason ?? terminalEvent?.note ?? '—';
+  const preparationStarted = order.statusHistory.some(event => event.status === 'preparing');
+  const title = isRejected ? 'Order Rejected' : 'Order Cancelled';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -27,7 +48,7 @@ export function CancelledOrderDetailsScreen({ navigation, route }: Props) {
         <Pressable onPress={() => navigation.goBack()} hitSlop={8} style={styles.backButton}>
           <Icon name="arrow-left" size={18} color={colors.textPrimary} />
         </Pressable>
-        <Text style={styles.headerTitle}>Order Cancelled</Text>
+        <Text style={styles.headerTitle}>{title}</Text>
       </View>
 
       <View style={styles.banner}>
@@ -36,75 +57,52 @@ export function CancelledOrderDetailsScreen({ navigation, route }: Props) {
         </View>
         <View style={styles.bannerTextColumn}>
           <Text style={styles.bannerTitle}>
-            {cancelledByCustomer ? 'Customer' : 'You'} cancelled {order.id}
+            {order.orderNumber} {isRejected ? 'rejected' : 'cancelled'}
           </Text>
           <Text style={styles.bannerSubtitle}>
-            {cancelledAt} · {pickingStarted ? 'After preparation started' : 'Before preparation started'}
+            {[endedAt, isRejected ? null : preparationStarted ? 'After preparation started' : 'Before preparation started']
+              .filter(Boolean)
+              .join(' · ')}
           </Text>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Cancellation Details</Text>
-          <DetailRow label="Order ID" value={`ORD-2026-${order.id.replace('ORD-', '')}`} />
+          <Text style={styles.sectionLabel}>{isRejected ? 'Rejection Details' : 'Cancellation Details'}</Text>
+          <DetailRow label="Order" value={order.orderNumber} />
           <DetailRow label="Customer" value={order.customerName} />
-          <DetailRow label="Cancelled by" value={cancelledByCustomer ? 'Customer' : 'You (Vendor)'} />
-          <DetailRow label="Reason" value={order.cancelReason ?? '—'} />
-          <DetailRow label="Refund" value={`₹${order.amount} → UPI within 3 days`} />
-          <DetailRow label="Cancelled at" value={cancelledAt} last />
+          <DetailRow label={isRejected ? 'Rejected by' : 'Cancelled by'} value={byLabel} />
+          <DetailRow label="Reason" value={reason} />
+          <DetailRow label="Order total" value={formatMoney(order.amount)} />
+          <DetailRow label="Payment" value={order.paymentMethod} />
+          <DetailRow label={isRejected ? 'Rejected at' : 'Cancelled at'} value={endedAt || '—'} last />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Cancelled Items</Text>
+          <Text style={styles.sectionLabel}>Items</Text>
           {order.products.map((product, index) => (
             <View
-              key={`${product.name}-${index}`}
+              key={`${product.productId}-${product.variantId}-${index}`}
               style={[styles.itemRow, index < order.products.length - 1 && styles.itemRowDivider]}
             >
               <Icon name="x" size={13} color={colors.textTertiary} />
               <Text style={styles.itemText}>
-                {product.name} ×{product.qty}
+                {product.name}
+                {product.variantLabel ? ` · ${product.variantLabel}` : ''} ×{product.qty}
               </Text>
             </View>
           ))}
         </View>
-
-        {!pickingStarted ? (
-          <InfoBanner
-            variant="warning"
-            message="No items were picked yet — no inventory action needed. Your stock remains unchanged."
-          />
-        ) : null}
-
-        {cancelledByCustomer ? (
-          <InfoBanner
-            variant="success"
-            message="Customer-initiated cancellation does not affect your acceptance rate or store rating."
-          />
-        ) : (
-          <InfoBanner
-            variant="neutral"
-            message="This cancellation counts toward your store's cancellation rate."
-          />
-        )}
       </ScrollView>
 
       <View style={styles.footer}>
         <FlexButton
-          label="View Details"
-          onPress={() => navigation.navigate('OrderDetails', { orderId })}
-          background={colors.surface}
-          textColor={colors.textSecondary}
-          borderColor={colors.border}
-          flex={1}
-        />
-        <FlexButton
-          label="Back to Orders"
-          onPress={() => navigation.reset({ index: 0, routes: [{ name: 'OrdersList' }] })}
+          label="Back"
+          onPress={() => navigation.goBack()}
           background={colors.primary}
           textColor={colors.white}
-          flex={1.9}
+          flex={1}
         />
       </View>
     </SafeAreaView>

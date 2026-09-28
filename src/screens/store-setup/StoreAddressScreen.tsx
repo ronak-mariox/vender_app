@@ -1,69 +1,106 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, Checkbox, FormSectionCard, Input, NavHeader, ProgressSteps, ScreenContainer } from '../../components';
-import { Icon } from '../../icons/Icon';
+import { Button, Checkbox, FormSectionCard, InfoBanner, Input, NavHeader, ProgressSteps, ScreenContainer } from '../../components';
 import { useStoreSetup, type StoreAddressData } from '../../context/StoreSetupContext';
 import { useRegistration } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage } from '../../services/api';
+import { api } from '../../services/api';
 import { isRequired, isValidMobile, isValidPincode, type FormErrors } from '../../utils/validators';
+import { handleFormSaveError } from '../registration/registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StoreAddress'>;
 
-type Errors = FormErrors<
-  'buildingShopNo' | 'street' | 'landmark' | 'area' | 'pincode' | 'city' | 'state' | 'contactNumber'
->;
+const FIELDS = [
+  'buildingShopNo',
+  'street',
+  'landmark',
+  'area',
+  'pincode',
+  'city',
+  'state',
+  'contactNumber',
+  'latitude',
+  'longitude',
+] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
-const DEFAULT_LOCATION: StoreAddressData['location'] = {
-  address: 'Plot 42, MG Road',
-  cityState: 'Dadar West, Mumbai, Maharashtra 400028',
-  latitude: 19.0176,
-  longitude: 72.8459,
-};
+type AddressForm = Omit<StoreAddressData, 'location'> & { latitude: string; longitude: string };
+
+function toForm(address: StoreAddressData): AddressForm {
+  return {
+    buildingShopNo: address.buildingShopNo,
+    street: address.street,
+    landmark: address.landmark,
+    area: address.area,
+    pincode: address.pincode,
+    city: address.city,
+    state: address.state,
+    contactNumber: address.contactNumber,
+    sameAsBusinessAddress: address.sameAsBusinessAddress,
+    latitude: address.location ? String(address.location.latitude) : '',
+    longitude: address.location ? String(address.location.longitude) : '',
+  };
+}
+
+function parseCoordinate(value: string, limit: number): number | null {
+  const trimmed = value.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return null;
+  const parsed = parseFloat(trimmed);
+  return Math.abs(parsed) <= limit ? parsed : null;
+}
 
 export function StoreAddressScreen({ navigation }: Props) {
   const { data, updateAddress } = useStoreSetup();
   const { data: registrationData } = useRegistration();
 
-  const [form, setForm] = useState<StoreAddressData>(
-    data.address ?? {
-      buildingShopNo: 'Plot 42, Ground Floor',
-      street: 'MG Road',
-      landmark: 'Near Dadar Railway Station',
-      area: registrationData.businessInfo?.city ? 'Dadar West' : '',
-      pincode: registrationData.businessInfo?.pincode ?? '',
-      city: registrationData.businessInfo?.city ?? '',
-      state: registrationData.businessInfo?.state ?? '',
-      contactNumber: registrationData.storeInfo?.contactNumber ?? '',
-      sameAsBusinessAddress: true,
-      location: DEFAULT_LOCATION,
-    },
-  );
+  const [form, setForm] = useState<AddressForm>(() => {
+    if (data.address) return toForm(data.address);
+    const storeInfo = registrationData.storeInfo;
+    const business = registrationData.businessInfo;
+    return {
+      buildingShopNo: '',
+      street: '',
+      landmark: storeInfo?.landmark ?? '',
+      area: '',
+      pincode: business?.pincode ?? '',
+      city: business?.city ?? '',
+      state: business?.state ?? '',
+      contactNumber: storeInfo?.contactNumber ?? '',
+      sameAsBusinessAddress: false,
+      latitude: storeInfo?.location ? String(storeInfo.location.latitude) : '',
+      longitude: storeInfo?.location ? String(storeInfo.location.longitude) : '',
+    };
+  });
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
 
-  function set<K extends keyof StoreAddressData>(key: K, value: StoreAddressData[K]) {
+  useEffect(() => {
+    if (data.address) setForm(toForm(data.address));
+  }, [data.address]);
+
+  function set<K extends keyof AddressForm>(key: K, value: AddressForm[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
     if (key in errors) setErrors(prev => ({ ...prev, [key as keyof Errors]: undefined }));
   }
 
   function toggleSameAddress(checked: boolean) {
-    if (checked && registrationData.businessInfo) {
+    const business = registrationData.businessInfo;
+    if (checked && business) {
       setForm(prev => ({
         ...prev,
         sameAsBusinessAddress: true,
-        buildingShopNo: registrationData.businessInfo!.addressLine1,
-        area: registrationData.businessInfo!.city,
-        pincode: registrationData.businessInfo!.pincode,
-        city: registrationData.businessInfo!.city,
-        state: registrationData.businessInfo!.state,
+        buildingShopNo: business.addressLine1,
+        street: business.addressLine2 || prev.street,
+        pincode: business.pincode,
+        city: business.city,
+        state: business.state,
       }));
       setErrors(prev => ({
         ...prev,
         buildingShopNo: undefined,
-        area: undefined,
+        street: undefined,
         pincode: undefined,
         city: undefined,
         state: undefined,
@@ -75,6 +112,8 @@ export function StoreAddressScreen({ navigation }: Props) {
 
   async function handleContinue() {
     const contactDigits = form.contactNumber.replace(/[^0-9]/g, '').slice(-10);
+    const latitude = parseCoordinate(form.latitude, 90);
+    const longitude = parseCoordinate(form.longitude, 180);
     const nextErrors: Errors = {};
     if (!isRequired(form.buildingShopNo)) nextErrors.buildingShopNo = 'Required';
     if (!isRequired(form.street)) nextErrors.street = 'Required';
@@ -84,16 +123,36 @@ export function StoreAddressScreen({ navigation }: Props) {
     if (!isRequired(form.city)) nextErrors.city = 'Required';
     if (!isRequired(form.state)) nextErrors.state = 'Required';
     if (!isValidMobile(contactDigits)) nextErrors.contactNumber = 'Enter a valid 10-digit contact number';
+    if (latitude === null) nextErrors.latitude = 'Enter a latitude between -90 and 90';
+    if (longitude === null) nextErrors.longitude = 'Enter a longitude between -180 and 180';
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0 || latitude === null || longitude === null) return;
+
+    const address: StoreAddressData = {
+      buildingShopNo: form.buildingShopNo.trim(),
+      street: form.street.trim(),
+      landmark: form.landmark.trim(),
+      area: form.area.trim(),
+      pincode: form.pincode,
+      city: form.city.trim(),
+      state: form.state.trim(),
+      contactNumber: contactDigits,
+      sameAsBusinessAddress: form.sameAsBusinessAddress,
+      location: {
+        address: `${form.buildingShopNo.trim()}, ${form.street.trim()}`,
+        cityState: `${form.area.trim()}, ${form.city.trim()}, ${form.state.trim()} ${form.pincode}`,
+        latitude,
+        longitude,
+      },
+    };
 
     setSaving(true);
     try {
-      await api.patch('/vendor/store-setup/address', form);
-      updateAddress(form);
-      navigation.navigate('OperatingHours');
+      await api.patch('/vendor/store-setup/address', address);
+      updateAddress(address);
+      navigation.navigate('StoreLocationConfirm');
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save your store address. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -115,7 +174,7 @@ export function StoreAddressScreen({ navigation }: Props) {
             required
             value={form.buildingShopNo}
             onChangeText={text => set('buildingShopNo', text)}
-            placeholder="Plot 42, Ground Floor"
+            placeholder="Shop / building number"
             error={errors.buildingShopNo}
           />
           <Input
@@ -123,7 +182,7 @@ export function StoreAddressScreen({ navigation }: Props) {
             required
             value={form.street}
             onChangeText={text => set('street', text)}
-            placeholder="MG Road"
+            placeholder="Street or road name"
             error={errors.street}
           />
           <Input
@@ -131,7 +190,7 @@ export function StoreAddressScreen({ navigation }: Props) {
             required
             value={form.landmark}
             onChangeText={text => set('landmark', text)}
-            placeholder="Near Dadar Railway Station"
+            placeholder="A well-known place nearby"
             error={errors.landmark}
           />
           <View style={styles.row}>
@@ -141,7 +200,7 @@ export function StoreAddressScreen({ navigation }: Props) {
                 required
                 value={form.area}
                 onChangeText={text => set('area', text)}
-                placeholder="Dadar West"
+                placeholder="Locality"
                 error={errors.area}
               />
             </View>
@@ -151,7 +210,7 @@ export function StoreAddressScreen({ navigation }: Props) {
                 required
                 value={form.pincode}
                 onChangeText={text => set('pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
-                placeholder="400028"
+                placeholder="000000"
                 keyboardType="number-pad"
                 error={errors.pincode}
               />
@@ -164,7 +223,7 @@ export function StoreAddressScreen({ navigation }: Props) {
                 required
                 value={form.city}
                 onChangeText={text => set('city', text)}
-                placeholder="Mumbai"
+                placeholder="City"
                 error={errors.city}
               />
             </View>
@@ -174,7 +233,7 @@ export function StoreAddressScreen({ navigation }: Props) {
                 required
                 value={form.state}
                 onChangeText={text => set('state', text)}
-                placeholder="Maharashtra"
+                placeholder="State"
                 error={errors.state}
               />
             </View>
@@ -185,7 +244,7 @@ export function StoreAddressScreen({ navigation }: Props) {
             leftIcon="phone"
             value={form.contactNumber}
             onChangeText={text => set('contactNumber', text)}
-            placeholder="+91 22 2654 7890"
+            placeholder="10-digit number"
             keyboardType="phone-pad"
             error={errors.contactNumber}
           />
@@ -199,16 +258,37 @@ export function StoreAddressScreen({ navigation }: Props) {
           </View>
         </Pressable>
 
-        <Pressable style={styles.pinCard} onPress={() => navigation.navigate('StoreLocationConfirm')}>
-          <View style={styles.pinIcon}>
-            <Icon name="pin" size={20} color={colors.white} />
+        <FormSectionCard title="Coordinates">
+          <View style={styles.row}>
+            <View style={styles.rowItem}>
+              <Input
+                label="Latitude"
+                required
+                value={form.latitude}
+                onChangeText={text => set('latitude', text.replace(/[^0-9.-]/g, ''))}
+                placeholder="e.g. 12.971599"
+                keyboardType="numbers-and-punctuation"
+                error={errors.latitude}
+              />
+            </View>
+            <View style={styles.rowItem}>
+              <Input
+                label="Longitude"
+                required
+                value={form.longitude}
+                onChangeText={text => set('longitude', text.replace(/[^0-9.-]/g, ''))}
+                placeholder="e.g. 77.594566"
+                keyboardType="numbers-and-punctuation"
+                error={errors.longitude}
+              />
+            </View>
           </View>
-          <View style={styles.pinTextColumn}>
-            <Text style={styles.pinTitle}>Pin on Map</Text>
-            <Text style={styles.pinSubtitle}>Tap to confirm exact location on map</Text>
-          </View>
-          <Icon name="chevron-right" size={18} color={colors.primary} />
-        </Pressable>
+        </FormSectionCard>
+
+        <InfoBanner
+          variant="info"
+          message="Delivery partners navigate to these coordinates. Copy them from any maps app by long-pressing your store's position."
+        />
 
         {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}
 
@@ -265,36 +345,6 @@ const styles = StyleSheet.create({
   },
   sameAddressSubtitle: {
     ...typography.tiny,
-    color: colors.textSecondary,
-  },
-  pinCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radii.xl,
-    backgroundColor: colors.primarySurface,
-    borderWidth: 1.5,
-    borderColor: colors.primaryBorder,
-  },
-  pinIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.md,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pinTextColumn: {
-    flex: 1,
-    gap: 1,
-  },
-  pinTitle: {
-    ...typography.labelSemibold,
-    color: colors.textPrimary,
-  },
-  pinSubtitle: {
-    ...typography.caption,
     color: colors.textSecondary,
   },
   errorText: {

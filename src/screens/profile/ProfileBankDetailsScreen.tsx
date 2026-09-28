@@ -5,7 +5,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Badge, Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useProfile } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus } from '../../context/ProfileContext';
 import { colors, fontFamilies, radii, shadows, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileBankDetails'>;
@@ -19,8 +19,10 @@ function formatAmount(value: number): string {
 }
 
 export function ProfileBankDetailsScreen({ navigation }: Props) {
-  const { bankDetails, settlements, bankDetailsRequestStatus } = useProfile();
+  const { bankDetails, settlements, bankDetailsRequestStatus, getDocument } = useProfile();
+  useProfileRefreshOnFocus();
   const isPendingReview = bankDetailsRequestStatus === 'pending';
+  const bankReviewStatus = getDocument('bankDetails')?.status;
 
   return (
     <ScreenContainer scrollable={false} backgroundColor={colors.white}>
@@ -32,12 +34,22 @@ export function ProfileBankDetailsScreen({ navigation }: Props) {
               <Icon name="clock" size={16} color={colors.warningDark} />
               <Text style={styles.pendingText}>Change request pending admin review</Text>
             </View>
-          ) : (
+          ) : bankReviewStatus === 'verified' ? (
             <View style={styles.verifiedBanner}>
               <Icon name="shield-check" size={16} color={colors.primaryDark} />
               <Text style={styles.verifiedText}>Bank account verified</Text>
             </View>
-          )}
+          ) : bankReviewStatus === 'rejected' ? (
+            <View style={styles.pendingBanner}>
+              <Icon name="alert-triangle" size={16} color={colors.warningDark} />
+              <Text style={styles.pendingText}>Bank details were rejected — submit a change request</Text>
+            </View>
+          ) : bankReviewStatus === 'pending' ? (
+            <View style={styles.pendingBanner}>
+              <Icon name="clock" size={16} color={colors.warningDark} />
+              <Text style={styles.pendingText}>Bank details awaiting verification</Text>
+            </View>
+          ) : null}
 
           <LinearGradient
             colors={[colors.primaryDark, '#0E6647']}

@@ -1,6 +1,16 @@
 import { IconName } from '../../icons/Icon';
 import { NotificationCategory } from '../../context/NotificationsContext';
-import { AuthStackParamList } from '../../navigation/types';
+
+/** Every notification detail route takes the same `{ notificationId }` param. */
+export type NotificationDetailRoute =
+  | 'NewOrderNotification'
+  | 'OrderCancellationNotification'
+  | 'LowStockNotification'
+  | 'OutOfStockNotification'
+  | 'PaymentNotification'
+  | 'ProductApprovalNotification'
+  | 'KYCStatusNotification'
+  | 'NotificationDetail';
 
 export type NotificationCategoryMeta = {
   icon: IconName;
@@ -8,7 +18,7 @@ export type NotificationCategoryMeta = {
   iconBg: string;
   accentColor: string;
   label: string;
-  route: keyof AuthStackParamList;
+  route: NotificationDetailRoute;
 };
 
 export const NOTIFICATION_CATEGORY_META: Record<NotificationCategory, NotificationCategoryMeta> = {
@@ -52,14 +62,6 @@ export const NOTIFICATION_CATEGORY_META: Record<NotificationCategory, Notificati
     label: 'Payment',
     route: 'PaymentNotification',
   },
-  settlement: {
-    icon: 'landmark',
-    iconColor: '#7C3AED',
-    iconBg: '#F5F3FF',
-    accentColor: '#7C3AED',
-    label: 'Settlement',
-    route: 'SettlementNotification',
-  },
   'product-approval': {
     icon: 'check-circle',
     iconColor: '#1CA672',
@@ -76,28 +78,22 @@ export const NOTIFICATION_CATEGORY_META: Record<NotificationCategory, Notificati
     label: 'KYC Status',
     route: 'KYCStatusNotification',
   },
-  'store-status': {
-    icon: 'home',
-    iconColor: '#1CA672',
-    iconBg: '#E8F5EF',
-    accentColor: '#1CA672',
-    label: 'Store Status',
-    route: 'StoreStatusNotification',
-  },
-  'system-alert': {
-    icon: 'alert-circle',
-    iconColor: '#D92D20',
-    iconBg: '#FEF3F2',
-    accentColor: '#D92D20',
-    label: 'System Alert',
-    route: 'SystemAlertNotification',
-  },
-  announcement: {
-    icon: 'flag',
-    iconColor: '#D97706',
-    iconBg: '#FFFBEB',
-    accentColor: '#D97706',
-    label: 'Announcement',
-    route: 'AnnouncementNotification',
-  },
 };
+
+export const DEFAULT_NOTIFICATION_META: NotificationCategoryMeta = {
+  icon: 'bell',
+  iconColor: '#374151',
+  iconBg: '#F3F4F6',
+  accentColor: '#374151',
+  label: 'Notification',
+  route: 'NotificationDetail',
+};
+
+function isKnownCategory(category: string): category is NotificationCategory {
+  return Object.prototype.hasOwnProperty.call(NOTIFICATION_CATEGORY_META, category);
+}
+
+/** Safe for any server category — unknown ones fall back to the generic detail screen. */
+export function getNotificationMeta(category: string): NotificationCategoryMeta {
+  return isKnownCategory(category) ? NOTIFICATION_CATEGORY_META[category] : DEFAULT_NOTIFICATION_META;
+}

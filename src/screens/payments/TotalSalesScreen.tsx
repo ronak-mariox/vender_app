@@ -1,24 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader } from '../../components';
 import { usePayments, Settlement } from '../../context/PaymentsContext';
-import { PeriodFilterBar, PaymentsPeriod } from './PeriodFilterBar';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import { formatINR, sumBy } from './settlementHelpers';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'TotalSales'>;
 
-function formatINR(amount: number) {
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
-}
-
 export function TotalSalesScreen({ navigation }: Props) {
-  const { settlements } = usePayments();
-  const [period, setPeriod] = useState<PaymentsPeriod>('month');
+  const { filteredSettlements: settlements, periodLabel } = usePayments();
 
-  const totalSales = useMemo(() => settlements.reduce((sum, s) => sum + s.grossSales, 0), [settlements]);
+  const totalSales = useMemo(() => sumBy(settlements, s => s.grossSales), [settlements]);
   const avgPerSettlement = settlements.length ? Math.round(totalSales / settlements.length) : 0;
   const bestSettlement = useMemo<Settlement | undefined>(
     () => settlements.reduce<Settlement | undefined>((best, s) => (!best || s.grossSales > best.grossSales ? s : best), undefined),
@@ -40,19 +36,19 @@ export function TotalSalesScreen({ navigation }: Props) {
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <NavHeader title="Total Sales" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <PeriodFilterBar value={period} onChange={setPeriod} />
+        <PeriodFilterBar />
 
         <View style={styles.totalBlock}>
           <Text style={styles.totalValue}>{formatINR(totalSales)}</Text>
           <Text style={styles.totalSublabel}>
-            {settlements.length} settlement{settlements.length === 1 ? '' : 's'} this period
+            {settlements.length} settlement{settlements.length === 1 ? '' : 's'} · {periodLabel}
           </Text>
         </View>
 
         <View style={styles.statsRow}>
           <StatTile value={String(settlements.length)} label="Settlements" />
           <StatTile value={formatINR(avgPerSettlement)} label="Avg / Settlement" />
-          <StatTile value={bestSettlement ? formatINR(bestSettlement.grossSales) : '—'} label="Best Period" />
+          <StatTile value={bestSettlement ? formatINR(bestSettlement.grossSales) : '—'} label="Best Week" />
         </View>
 
         <Text style={styles.sectionTitle}>Sales by Settlement</Text>
@@ -69,7 +65,7 @@ export function TotalSalesScreen({ navigation }: Props) {
               <Text style={styles.breakdownPercent}>{item.percent}% of sales</Text>
             </View>
           ))}
-          {breakdown.length === 0 ? <Text style={styles.emptyText}>No settlements yet</Text> : null}
+          {breakdown.length === 0 ? <Text style={styles.emptyText}>No settlements in this period</Text> : null}
         </View>
       </ScrollView>
     </SafeAreaView>

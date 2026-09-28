@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Badge, InventoryRow } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { useInventoryRefresh } from './useInventoryRefresh';
 import { isInventoryCategory, UNAVAILABLE_REASON_LABEL } from '../../utils/inventory';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
@@ -13,6 +14,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Unavailable'>;
 
 export function UnavailableScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
+  const { refreshing, onRefresh } = useInventoryRefresh();
   const unavailableProducts = useMemo(
     () => products.filter(product => isInventoryCategory(product, 'unavailable')),
     [products],
@@ -34,11 +36,13 @@ export function UnavailableScreen({ navigation }: Props) {
         data={unavailableProducts}
         keyExtractor={item => item.id}
         style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item }) => {
           const reason = UNAVAILABLE_REASON_LABEL[item.status] ?? { label: item.status, tone: 'neutral' as const };
           return (
             <InventoryRow
               name={item.name}
+              imageUrl={item.images?.[0]}
               sku={item.sku}
               muted
               onPress={() => navigation.navigate('ProductStockDetails', { productId: item.id })}

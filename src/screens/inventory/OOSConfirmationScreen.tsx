@@ -1,24 +1,20 @@
-import React, { useMemo } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
-import { useInventory } from '../../context/InventoryContext';
 import { colors, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OOSConfirmation'>;
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function OOSConfirmationScreen({ navigation, route }: Props) {
   const { productId } = route.params;
   const { products } = useProductCatalog();
-  const { eventsForProduct } = useInventory();
   const product = products.find(item => item.id === productId);
-  const events = useMemo(() => eventsForProduct(productId), [eventsForProduct, productId]);
 
   if (!product) {
     return (
@@ -28,18 +24,16 @@ export function OOSConfirmationScreen({ navigation, route }: Props) {
     );
   }
 
-  const cutoff = Date.now() - SEVEN_DAYS_MS;
-  const sold7d = events
-    .filter(event => event.delta < 0 && event.timestamp >= cutoff)
-    .reduce((sum, event) => sum + Math.abs(event.delta), 0);
-  const revenue7d = sold7d * product.sellingPrice;
+  const variants = product.variants ?? [];
+  const emptyVariants = variants.filter(variant => variant.stock === 0);
+  const partlyOut = product.stock > 0;
 
-  const impactItems = [
-    'Product hidden from all customers',
-    'Cannot receive new orders',
-    'Affected customers notified (if subscribed)',
-    sold7d > 0 ? `Last 7-day sales: ${sold7d} units (₹${revenue7d.toLocaleString('en-IN')})` : 'No sales recorded in the last 7 days',
-  ];
+  const impactItems = partlyOut
+    ? [
+        `${emptyVariants.map(variant => variant.size).join(', ')} can't be ordered until restocked`,
+        `${product.stock} units remain across other variants`,
+      ]
+    : ["Customers can't order this product until you add stock", 'It stays in your catalog with its details and prices'];
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -49,21 +43,30 @@ export function OOSConfirmationScreen({ navigation, route }: Props) {
           <View style={styles.iconCircle}>
             <Icon name="package" size={44} color={colors.error} />
           </View>
-          <Text style={styles.heading}>Product is Out of Stock</Text>
-          <Text style={styles.subtitle}>{product.name} has reached 0 units. It is now hidden from customers.</Text>
+          <Text style={styles.heading}>{partlyOut ? 'Variant Out of Stock' : 'Product is Out of Stock'}</Text>
+          <Text style={styles.subtitle}>
+            {partlyOut
+              ? `A variant of ${product.name} has reached 0 units.`
+              : `${product.name} has reached 0 units.`}
+          </Text>
 
           <View style={styles.summaryCard}>
-            <View style={styles.summaryIcon}>
-              <Icon name="package" size={20} color={colors.error} />
-            </View>
+            <ProductThumb
+              imageUrl={product.images?.[0]}
+              style={styles.summaryIcon}
+              iconSize={20}
+              iconColor={colors.error}
+            />
             <View style={styles.summaryTextColumn}>
               <Text style={styles.summaryName}>{product.name}</Text>
               <Text style={styles.summaryMeta}>
-                SKU: {product.sku} · {product.categoryName}
+                SKU: {product.sku || '—'} · {product.categoryName || '—'}
               </Text>
               <View style={styles.statusRow}>
                 <View style={styles.statusDot} />
-                <Text style={styles.statusText}>0 units · Hidden from customers</Text>
+                <Text style={styles.statusText}>
+                  {partlyOut ? `${product.stock} units left in total` : "0 units · Can't be ordered"}
+                </Text>
               </View>
             </View>
           </View>
@@ -84,16 +87,7 @@ export function OOSConfirmationScreen({ navigation, route }: Props) {
             label="Add Stock Now"
             onPress={() => navigation.replace('UpdateQuantity', { productId })}
           />
-          <Button
-            label="Remind me later"
-            variant="outline"
-            icon={<Icon name="clock" size={15} color={colors.textPrimary} />}
-            onPress={() => {
-              Alert.alert('Reminder set', "We'll remind you about this product later.");
-              navigation.goBack();
-            }}
-          />
-          <Button label="Keep hidden (no stock available)" variant="text" onPress={() => navigation.goBack()} />
+          <Button label="Not now" variant="outline" onPress={() => navigation.goBack()} />
         </View>
       </View>
     </SafeAreaView>

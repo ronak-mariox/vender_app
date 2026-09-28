@@ -1,7 +1,7 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import Svg, { Defs, LinearGradient, Path, Polyline, Stop } from 'react-native-svg';
-import { colors, radii } from '../../theme';
+import { colors, radii, typography } from '../../theme';
 
 type Props = {
   data: number[];
@@ -12,7 +12,15 @@ type Props = {
 export function TrendLineChart({ data, height = 100, color = colors.primary }: Props) {
   const [width, setWidth] = React.useState(0);
 
-  if (data.length < 2) return null;
+  if (data.length < 2) {
+    return (
+      <View style={{ height, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+          {data.length === 0 ? 'No activity in this period' : 'Not enough days for a trend yet'}
+        </Text>
+      </View>
+    );
+  }
 
   const min = Math.min(...data);
   const max = Math.max(...data);

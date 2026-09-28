@@ -1,26 +1,25 @@
 import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, IconCircle, ScreenContainer } from '../../components';
 import { Icon, IconName } from '../../icons/Icon';
 import { useRegistration } from '../../context/RegistrationContext';
+import { useVendorAuth } from '../../context/VendorAuthContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'KYCApproved'>;
 
 const NEXT_STEPS: { icon: IconName; title: string; subtitle: string }[] = [
-  { icon: 'home', title: 'Add your first products', subtitle: 'Start building your catalog' },
-  { icon: 'credit-card', title: 'Set up payment preferences', subtitle: 'Configure settlement schedule' },
-  { icon: 'pin', title: 'Configure delivery zones', subtitle: 'Define your service area' },
+  { icon: 'home', title: 'Set up your store', subtitle: 'Profile, address, hours and delivery' },
+  { icon: 'plus', title: 'Add your first products', subtitle: 'Start building your catalog' },
+  { icon: 'truck', title: 'Start taking orders', subtitle: 'Once your store is set up' },
 ];
-
-function formatToday() {
-  return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-}
 
 export function KYCApprovedScreen({ navigation }: Props) {
   const { data } = useRegistration();
+  const { vendor } = useVendorAuth();
+  const referenceId = data.referenceId ?? vendor?.referenceId ?? null;
 
   return (
     <ScreenContainer scrollable>
@@ -37,8 +36,7 @@ export function KYCApprovedScreen({ navigation }: Props) {
             <Text style={styles.statusHeaderText}>Account Verified & Active</Text>
           </View>
           <View style={styles.statusRows}>
-            <StatusRow label="Approval Date" value={formatToday()} />
-            <StatusRow label="Reference ID" value={data.referenceId ?? '—'} />
+            <StatusRow label="Reference ID" value={referenceId ?? '—'} />
             <StatusRow label="Account Status" value="Active" valueColor={colors.primary} />
             <StatusRow label="Store Name" value={data.storeInfo?.storeName ?? '—'} />
           </View>
@@ -47,10 +45,9 @@ export function KYCApprovedScreen({ navigation }: Props) {
         <View style={styles.nextCard}>
           <Text style={styles.nextTitle}>What's Next</Text>
           {NEXT_STEPS.map((step, index) => (
-            <Pressable
+            <View
               key={step.title}
               style={[styles.nextRow, index < NEXT_STEPS.length - 1 && styles.nextRowDivider]}
-              onPress={() => Alert.alert(step.title, 'Coming soon.')}
             >
               <View style={styles.nextIcon}>
                 <Icon name={step.icon} size={16} color={colors.primary} />
@@ -59,18 +56,12 @@ export function KYCApprovedScreen({ navigation }: Props) {
                 <Text style={styles.nextRowTitle}>{step.title}</Text>
                 <Text style={styles.nextRowSubtitle}>{step.subtitle}</Text>
               </View>
-              <Icon name="chevron-right" size={16} color={colors.textSecondary} />
-            </Pressable>
+            </View>
           ))}
         </View>
 
         <View style={styles.footer}>
-          <Button label="Go to Dashboard" onPress={() => navigation.navigate('RegistrationComplete')} />
-          <Button
-            label="Set Up Your First Listing"
-            variant="outline"
-            onPress={() => Alert.alert('Set Up Your First Listing', 'Coming soon.')}
-          />
+          <Button label="Set Up Your Store" onPress={() => navigation.replace('StoreSetupIntro')} />
         </View>
       </View>
     </ScreenContainer>

@@ -4,9 +4,7 @@ import { CreateProductInput, Product, useProductCatalog } from './ProductCatalog
 export type BasicInfoData = {
   name: string;
   brand: string;
-  manufacturer: string;
   countryOfOrigin: string;
-  shortDescription: string;
 };
 
 export type ImagesData = {
@@ -22,8 +20,7 @@ export type CategoryData = {
 };
 
 export type DescriptionData = {
-  fullDescription: string;
-  keyFeatures: string[];
+  description: string;
 };
 
 export type ProductVariant = {
@@ -38,24 +35,18 @@ export type ProductVariant = {
 export type PackSizeData = {
   netWeight: string;
   unit: string;
-  packType: string;
-  itemsPerPack: string;
+  /** True when prices/stock are captured per variant (attribute categories, or multiple sizes). */
   variantsEnabled: boolean;
   variants: ProductVariant[];
+  /** Label of the admin-configured variant type the vendor picked (e.g. "Storage"). */
+  variantTypeLabel?: string;
+  /** Sold as one piece — no size, unit or options. */
+  singleItem?: boolean;
 };
 
 export type PricingData = {
   mrp: string;
-  mrpGstInclusive: boolean;
   sellingPrice: string;
-};
-
-export type DiscountMode = 'percentage' | 'fixed';
-
-export type DiscountData = {
-  mode: DiscountMode;
-  value: string;
-  limitedTimeOffer: boolean;
 };
 
 export type TaxData = {
@@ -69,18 +60,9 @@ export type IdentifiersData = {
 };
 
 export type StockData = {
-  opening: number;
+  opening: string;
   reorderLevel: string;
   maxStock: string;
-  trackAutomatically: boolean;
-  autoPause: boolean;
-};
-
-export type AvailabilityData = {
-  onlineStore: boolean;
-  inStorePos: boolean;
-  bulkOrders: boolean;
-  schedulePublish: boolean;
 };
 
 type ProductDraft = {
@@ -90,46 +72,43 @@ type ProductDraft = {
   description?: DescriptionData;
   packSize?: PackSizeData;
   pricing?: PricingData;
-  discount: DiscountData;
   tax?: TaxData;
   identifiers?: IdentifiersData;
   stock?: StockData;
-  availability: AvailabilityData;
 };
 
 const INITIAL_DRAFT: ProductDraft = {
   images: { images: [] },
-  discount: { mode: 'percentage', value: '', limitedTimeOffer: false },
-  availability: {
-    onlineStore: true,
-    inStorePos: false,
-    bulkOrders: false,
-    schedulePublish: false,
-  },
 };
+
+export const ADD_PRODUCT_TOTAL_STEPS = 9;
+
+export const SINGLE_ITEM_LABEL = '1 pc';
+
+export function packSizeLabel(packSize?: PackSizeData): string {
+  if (packSize?.singleItem) return SINGLE_ITEM_LABEL;
+  if (!packSize || !packSize.netWeight) return '';
+  return `${packSize.netWeight}${packSize.unit}`;
+}
+
+export function usesVariantPricing(packSize?: PackSizeData): boolean {
+  return !!packSize?.variantsEnabled && packSize.variants.length > 0;
+}
 
 type ProductDraftContextValue = {
   draft: ProductDraft;
-  /**
-   * Resolved MRP/selling price to *display* to the vendor. For attribute-kind categories
-   * (e.g. Fashion sizes) pricing is captured per-variant in PackSizeVariantScreen and
-   * `draft.pricing` is never set — falls back to the primary (or first) variant's price so
-   * Review/Publish screens don't show a fabricated ₹0 when a real price was set.
-   */
+  /** MRP/selling price to display: the single price, or the primary variant's when priced per variant. */
   effectivePricing: PricingData | undefined;
   updateBasicInfo: (value: BasicInfoData) => void;
   updateImages: (value: ImagesData) => void;
   updateCategory: (value: CategoryData) => void;
   updateDescription: (value: DescriptionData) => void;
   updatePackSize: (value: PackSizeData) => void;
-  updatePricing: (value: PricingData) => void;
-  updateDiscount: (value: DiscountData) => void;
+  updatePricing: (value: Partial<PricingData>) => void;
   updateTax: (value: TaxData) => void;
-  updateIdentifiers: (value: IdentifiersData) => void;
+  updateIdentifiers: (value: Partial<IdentifiersData>) => void;
   updateStock: (value: StockData) => void;
-  updateAvailability: (value: AvailabilityData) => void;
   resetDraft: () => void;
-  computedDiscountPercent: () => number;
   publishDraft: () => Promise<Product>;
 };
 
@@ -154,99 +133,79 @@ export function ProductDraftProvider({ children }: { children: React.ReactNode }
   const updatePackSize = useCallback((value: PackSizeData) => {
     setDraft(prev => ({ ...prev, packSize: value }));
   }, []);
-  const updatePricing = useCallback((value: PricingData) => {
-    setDraft(prev => ({ ...prev, pricing: value }));
-  }, []);
-  const updateDiscount = useCallback((value: DiscountData) => {
-    setDraft(prev => ({ ...prev, discount: value }));
+  const updatePricing = useCallback((value: Partial<PricingData>) => {
+    setDraft(prev => ({
+      ...prev,
+      pricing: { mrp: '', sellingPrice: '', ...prev.pricing, ...value },
+    }));
   }, []);
   const updateTax = useCallback((value: TaxData) => {
     setDraft(prev => ({ ...prev, tax: value }));
   }, []);
-  const updateIdentifiers = useCallback((value: IdentifiersData) => {
-    setDraft(prev => ({ ...prev, identifiers: value }));
+  const updateIdentifiers = useCallback((value: Partial<IdentifiersData>) => {
+    setDraft(prev => ({
+      ...prev,
+      identifiers: { sku: '', barcode: '', ...prev.identifiers, ...value },
+    }));
   }, []);
   const updateStock = useCallback((value: StockData) => {
     setDraft(prev => ({ ...prev, stock: value }));
-  }, []);
-  const updateAvailability = useCallback((value: AvailabilityData) => {
-    setDraft(prev => ({ ...prev, availability: value }));
   }, []);
   const resetDraft = useCallback(() => {
     setDraft(INITIAL_DRAFT);
   }, []);
 
   const effectivePricing = useMemo<PricingData | undefined>(() => {
-    if (draft.pricing?.mrp || draft.pricing?.sellingPrice) {
-      return draft.pricing;
+    if (usesVariantPricing(draft.packSize)) {
+      const variants = draft.packSize?.variants ?? [];
+      const primary = variants.find(v => v.isPrimary) ?? variants[0];
+      return primary ? { mrp: primary.mrp, sellingPrice: primary.sellingPrice } : undefined;
     }
-    const variants = draft.packSize?.variants ?? [];
-    const primaryVariant = variants.find(v => v.isPrimary) ?? variants[0];
-    if (!primaryVariant) {
-      return draft.pricing;
-    }
-    return {
-      mrp: primaryVariant.mrp,
-      mrpGstInclusive: draft.pricing?.mrpGstInclusive ?? true,
-      sellingPrice: primaryVariant.sellingPrice,
-    };
+    return draft.pricing;
   }, [draft.pricing, draft.packSize]);
 
-  const computedDiscountPercent = useCallback(() => {
-    const mrp = parseFloat(draft.pricing?.mrp ?? '');
-    const sp = parseFloat(draft.pricing?.sellingPrice ?? '');
-    if (!mrp || !sp || mrp <= 0 || sp > mrp) return 0;
-    return Math.round(((mrp - sp) / mrp) * 1000) / 10;
-  }, [draft.pricing]);
-
   const publishDraft = useCallback(async () => {
-    const mrp = parseFloat(draft.pricing?.mrp ?? '0') || 0;
-    const sellingPrice = parseFloat(draft.pricing?.sellingPrice ?? '0') || mrp;
-    const openingStock = draft.stock?.opening ?? 0;
-    const packSizeLabel = draft.packSize
-      ? `${draft.packSize.netWeight}${draft.packSize.unit.split(' ')[0]}`
-      : undefined;
+    const perVariant = usesVariantPricing(draft.packSize);
+    const variants: CreateProductInput['variants'] = perVariant
+      ? (draft.packSize?.variants ?? []).map(variant => ({
+          label: variant.size.trim(),
+          mrp: parseFloat(variant.mrp) || 0,
+          price: parseFloat(variant.sellingPrice) || 0,
+          stock: parseInt(variant.stock, 10) || 0,
+          isPrimary: variant.isPrimary,
+        }))
+      : [
+          {
+            label: packSizeLabel(draft.packSize) || 'Default',
+            mrp: parseFloat(draft.pricing?.mrp ?? '') || 0,
+            price: parseFloat(draft.pricing?.sellingPrice ?? '') || 0,
+            stock: parseInt(draft.stock?.opening ?? '', 10) || 0,
+            isPrimary: true,
+          },
+        ];
+    if (perVariant && !variants.some(variant => variant.isPrimary)) {
+      variants[0].isPrimary = true;
+    }
 
-    const manualVariants =
-      draft.packSize?.variantsEnabled && draft.packSize.variants.length > 0 ? draft.packSize.variants : [];
-
-    const variants: CreateProductInput['variants'] =
-      manualVariants.length > 0
-        ? manualVariants.map(variant => ({
-            id: variant.id,
-            label: variant.size,
-            mrp: parseFloat(variant.mrp) || 0,
-            price: parseFloat(variant.sellingPrice) || 0,
-            stock: parseInt(variant.stock, 10) || 0,
-            isPrimary: variant.isPrimary,
-          }))
-        : [
-            {
-              id: `v${Date.now()}`,
-              label: packSizeLabel || 'Default',
-              mrp,
-              price: sellingPrice,
-              stock: openingStock,
-              isPrimary: true,
-            },
-          ];
+    const reorderLevel = parseInt(draft.stock?.reorderLevel ?? '', 10);
+    const maxStock = parseInt(draft.stock?.maxStock ?? '', 10);
 
     const input: CreateProductInput = {
       categoryId: draft.category?.categoryId ?? '',
       subcategoryId: draft.category?.subcategoryId || undefined,
-      name: draft.basicInfo?.name ?? 'Untitled Product',
-      description: draft.description?.fullDescription || draft.basicInfo?.shortDescription || undefined,
+      name: draft.basicInfo?.name ?? '',
+      description: draft.description?.description || undefined,
       brand: draft.basicInfo?.brand || undefined,
       unit: draft.packSize?.unit || undefined,
       images: draft.images.images,
       variants,
-      taxRate: parseFloat(draft.tax?.gstRate ?? '0') || 0,
+      taxRate: parseFloat(draft.tax?.gstRate ?? '') || 0,
       sku: draft.identifiers?.sku || undefined,
       barcode: draft.identifiers?.barcode || undefined,
       hsnCode: draft.tax?.hsnCode || undefined,
       countryOfOrigin: draft.basicInfo?.countryOfOrigin || undefined,
-      reorderLevel: parseInt(draft.stock?.reorderLevel ?? '0', 10) || 0,
-      maxStock: parseInt(draft.stock?.maxStock ?? '0', 10) || 0,
+      reorderLevel: Number.isNaN(reorderLevel) ? undefined : reorderLevel,
+      maxStock: Number.isNaN(maxStock) ? undefined : maxStock,
     };
 
     return addProduct(input);
@@ -262,13 +221,10 @@ export function ProductDraftProvider({ children }: { children: React.ReactNode }
       updateDescription,
       updatePackSize,
       updatePricing,
-      updateDiscount,
       updateTax,
       updateIdentifiers,
       updateStock,
-      updateAvailability,
       resetDraft,
-      computedDiscountPercent,
       publishDraft,
     }),
     [
@@ -280,13 +236,10 @@ export function ProductDraftProvider({ children }: { children: React.ReactNode }
       updateDescription,
       updatePackSize,
       updatePricing,
-      updateDiscount,
       updateTax,
       updateIdentifiers,
       updateStock,
-      updateAvailability,
       resetDraft,
-      computedDiscountPercent,
       publishDraft,
     ],
   );

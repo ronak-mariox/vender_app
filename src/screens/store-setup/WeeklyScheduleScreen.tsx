@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -7,33 +7,37 @@ import { Button, NavHeader, ProgressSteps, ScreenContainer } from '../../compone
 import { Icon } from '../../icons/Icon';
 import { useStoreSetup, type DaySchedule } from '../../context/StoreSetupContext';
 import { TIME_OPTIONS } from '../../utils/time';
-import { api, getApiErrorMessage } from '../../services/api';
-import { isTimeRangeValid, type FormErrors } from '../../utils/validators';
+import { api } from '../../services/api';
+import { type FormErrors } from '../../utils/validators';
+import { handleFormSaveError } from '../registration/registrationHelpers';
+import { isCloseAfterOpen } from './storeSetupHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'WeeklySchedule'>;
 
-type Errors = FormErrors<'schedule'>;
+const FIELDS = ['schedule', 'weeklySchedule'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
-const DEFAULT_SCHEDULE: DaySchedule[] = [
-  { day: 'Mon', open: '9:00 AM', close: '9:00 PM', isOpen: true },
-  { day: 'Tue', open: '9:00 AM', close: '9:00 PM', isOpen: true },
-  { day: 'Wed', open: '9:00 AM', close: '9:00 PM', isOpen: true },
-  { day: 'Thu', open: '9:00 AM', close: '9:00 PM', isOpen: true },
-  { day: 'Fri', open: '9:00 AM', close: '10:00 PM', isOpen: true },
-  { day: 'Sat', open: '8:00 AM', close: '6:00 PM', isOpen: true },
-  { day: 'Sun', open: '9:00 AM', close: '9:00 PM', isOpen: false },
-];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function emptySchedule(): DaySchedule[] {
+  return DAYS.map(day => ({ day, open: '', close: '', isOpen: true }));
+}
 
 export function WeeklyScheduleScreen({ navigation }: Props) {
   const { data, updateOperatingHours } = useStoreSetup();
   const [schedule, setSchedule] = useState<DaySchedule[]>(
-    data.operatingHours?.weeklySchedule ?? DEFAULT_SCHEDULE,
+    data.operatingHours?.weeklySchedule?.length === 7 ? data.operatingHours.weeklySchedule : emptySchedule(),
   );
   const [editing, setEditing] = useState<{ index: number; field: 'open' | 'close' } | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [invalidDays, setInvalidDays] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const weekly = data.operatingHours?.weeklySchedule;
+    if (weekly?.length === 7) setSchedule(weekly);
+  }, [data.operatingHours?.weeklySchedule]);
 
   function updateDay(index: number, patch: Partial<DaySchedule>) {
     setSchedule(prev => prev.map((day, idx) => (idx === index ? { ...day, ...patch } : day)));
@@ -62,18 +66,25 @@ export function WeeklyScheduleScreen({ navigation }: Props) {
   }, [schedule]);
 
   async function handleContinue() {
-    const badDays = schedule.filter(day => day.isOpen && !isTimeRangeValid(day.open, day.close));
+    const openDays = schedule.filter(day => day.isOpen);
+    if (openDays.length === 0) {
+      setErrors({ schedule: 'Keep your store open on at least one day' });
+      return;
+    }
+    const badDays = openDays.filter(day => !isCloseAfterOpen(day.open, day.close));
     if (badDays.length > 0) {
       setInvalidDays(new Set(badDays.map(day => day.day)));
-      setErrors({ schedule: `Closing time must be after opening time (${badDays.map(day => day.day).join(', ')})` });
+      setErrors({
+        schedule: `Set an opening time and a later closing time for ${badDays.map(day => day.day).join(', ')}`,
+      });
       return;
     }
     setInvalidDays(new Set());
 
     const value = {
       sameEveryDay: false,
-      defaultOpen: data.operatingHours?.defaultOpen ?? '9:00 AM',
-      defaultClose: data.operatingHours?.defaultClose ?? '9:00 PM',
+      defaultOpen: data.operatingHours?.defaultOpen || openDays[0].open,
+      defaultClose: data.operatingHours?.defaultClose || openDays[0].close,
       breakEnabled: data.operatingHours?.breakEnabled ?? false,
       weeklySchedule: schedule,
     };
@@ -84,7 +95,7 @@ export function WeeklyScheduleScreen({ navigation }: Props) {
       updateOperatingHours(value);
       navigation.navigate('HolidayClosure');
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save your weekly schedule. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -122,7 +133,7 @@ export function WeeklyScheduleScreen({ navigation }: Props) {
                     onPress={() => setEditing({ index, field: 'open' })}
                   >
                     <Icon name="clock" size={12} color={colors.textPrimary} />
-                    <Text style={styles.timeChipText}>{day.open}</Text>
+                    <Text style={styles.timeChipText}>{day.open || 'Open'}</Text>
                   </Pressable>
                   <View style={styles.timeChipDash} />
                   <Pressable
@@ -130,7 +141,7 @@ export function WeeklyScheduleScreen({ navigation }: Props) {
                     onPress={() => setEditing({ index, field: 'close' })}
                   >
                     <Icon name="clock" size={12} color={colors.textPrimary} />
-                    <Text style={styles.timeChipText}>{day.close}</Text>
+                    <Text style={styles.timeChipText}>{day.close || 'Close'}</Text>
                   </Pressable>
                 </View>
               ) : (

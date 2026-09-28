@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { useOrders } from '../../context/OrdersContext';
-import { getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { useOrderAction } from '../orders/orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CancellationReason'>;
 
@@ -21,25 +21,21 @@ const REASONS = [
 
 export function CancellationReasonScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const { getOrder, cancelAcceptedOrder } = useOrders();
+  const { getOrder } = useOrders();
   const order = getOrder(orderId);
+  const { perform, busy: submitting } = useOrderAction(navigation);
   const [selected, setSelected] = useState(REASONS[0].label);
   const [note, setNote] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const needsNote = selected === 'Other';
+  const trimmedNote = note.trim();
+  const canSubmit = !submitting && (!needsNote || trimmedNote.length > 0);
 
   if (!order) return null;
 
-  async function handleConfirm() {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      await cancelAcceptedOrder(orderId, selected);
-      navigation.replace('CancellationConfirmation', { orderId, reasonLabel: selected });
-    } catch (err) {
-      Alert.alert('Could not cancel order', getApiErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+  function handleConfirm() {
+    if (!canSubmit) return;
+    const reason = needsNote ? trimmedNote : trimmedNote ? `${selected}: ${trimmedNote}` : selected;
+    perform('cancel', orderId, reason);
   }
 
   return (
@@ -53,7 +49,7 @@ export function CancellationReasonScreen({ navigation, route }: Props) {
 
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.intro}>
-          Please select the reason for cancelling {order.id}. This helps the customer and improves the
+          Please select the reason for cancelling {order.orderNumber}. This helps the customer and improves the
           platform.
         </Text>
 
@@ -83,7 +79,7 @@ export function CancellationReasonScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.noteCard}>
-          <Text style={styles.noteLabel}>Additional details (optional)</Text>
+          <Text style={styles.noteLabel}>{needsNote ? 'Describe your reason' : 'Additional details (optional)'}</Text>
           <TextInput
             style={styles.noteInput}
             placeholder="Explain the situation..."
@@ -97,9 +93,9 @@ export function CancellationReasonScreen({ navigation, route }: Props) {
 
       <View style={styles.footer}>
         <Pressable
-          style={[styles.confirmButton, submitting && styles.confirmButtonDisabled]}
+          style={[styles.confirmButton, !canSubmit && styles.confirmButtonDisabled]}
           onPress={handleConfirm}
-          disabled={submitting}
+          disabled={!canSubmit}
         >
           <Text style={styles.confirmButtonText}>{submitting ? 'Cancelling…' : 'Confirm Cancellation'}</Text>
         </Pressable>

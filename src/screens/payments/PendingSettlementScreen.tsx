@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -6,7 +6,8 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { usePayments } from '../../context/PaymentsContext';
-import { PeriodFilterBar, PaymentsPeriod } from './PeriodFilterBar';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import { formatINR, sumBy } from './settlementHelpers';
 import { SettlementRow } from './SettlementRow';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -17,31 +18,16 @@ const AMBER_BORDER = '#FDE68A';
 const AMBER_TEXT = '#92400E';
 const AMBER_TEXT_LIGHT = '#B45309';
 
-function formatINR(amount: number) {
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
-}
-
-const STATUS_NOTE: Record<string, string> = {
-  pending: 'Awaiting settlement',
-  failed: 'Settlement failed',
-};
-
 export function PendingSettlementScreen({ navigation }: Props) {
-  const { settlements } = usePayments();
-  const [period, setPeriod] = useState<PaymentsPeriod>('month');
+  const { filteredSettlements } = usePayments();
 
-  const pendingSettlements = useMemo(() => settlements.filter(s => s.status !== 'paid'), [settlements]);
-  const pendingTotal = useMemo(() => pendingSettlements.reduce((sum, s) => sum + s.netPayout, 0), [pendingSettlements]);
-  const earliestDue = useMemo(
-    () => pendingSettlements.find(s => s.dueDateLabel) ?? pendingSettlements[0],
-    [pendingSettlements],
-  );
-  const dueDateShort = earliestDue?.dueDateLabel?.replace(/^Due\s*/i, '') ?? '';
-  const statusNote = earliestDue
-    ? earliestDue.status === 'failed'
-      ? earliestDue.failureReason ?? STATUS_NOTE.failed
-      : STATUS_NOTE[earliestDue.status] ?? 'Awaiting settlement'
-    : '';
+  const pendingSettlements = useMemo(() => filteredSettlements.filter(s => s.status !== 'paid'), [filteredSettlements]);
+  const pendingTotal = useMemo(() => sumBy(pendingSettlements, s => s.netPayout), [pendingSettlements]);
+  const failed = pendingSettlements.filter(s => s.status === 'failed');
+  const statusNote =
+    failed.length > 0
+      ? `${failed.length} payout${failed.length === 1 ? '' : 's'} failed${failed[0].failureReason ? ` — ${failed[0].failureReason}` : ''}`
+      : `${pendingSettlements.length} weekly settlement${pendingSettlements.length === 1 ? '' : 's'} awaiting payout`;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -52,14 +38,14 @@ export function PendingSettlementScreen({ navigation }: Props) {
             <Icon name="alert-circle" size={20} color={AMBER_TEXT_LIGHT} />
             <View style={styles.bannerTextColumn}>
               <Text style={styles.bannerTitle}>
-                {formatINR(pendingTotal)} to be settled{dueDateShort ? ` by ${dueDateShort}` : ''}
+                {formatINR(pendingTotal)} to be settled
               </Text>
               <Text style={styles.bannerSubtitle}>{statusNote}</Text>
             </View>
           </View>
         ) : null}
 
-        <PeriodFilterBar value={period} onChange={setPeriod} />
+        <PeriodFilterBar />
 
         <View style={styles.listCard}>
           {pendingSettlements.map(settlement => (
@@ -70,7 +56,7 @@ export function PendingSettlementScreen({ navigation }: Props) {
             />
           ))}
           {pendingSettlements.length === 0 ? (
-            <Text style={styles.emptyText}>No pending settlements — you&apos;re all caught up.</Text>
+            <Text style={styles.emptyText}>No pending settlements in this period.</Text>
           ) : null}
         </View>
       </ScrollView>

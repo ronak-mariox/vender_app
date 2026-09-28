@@ -35,7 +35,8 @@ export function FlexButton({
       disabled={disabled}
       style={[
         styles.base,
-        { flex, height, borderRadius: radius, backgroundColor: background },
+        // minHeight keeps the button visible inside a column container, where `flex` would collapse its height to 0.
+        { flex, height, minHeight: height, borderRadius: radius, backgroundColor: background },
         borderColor ? { borderWidth: 1.5, borderColor } : null,
         disabled && styles.disabled,
       ]}

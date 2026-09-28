@@ -4,51 +4,56 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Badge, Button, NavHeader, ReviewSectionCard } from '../../components';
-import { Icon } from '../../icons/Icon';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { packSizeLabel, useProductDraft, usesVariantPricing } from '../../context/ProductDraftContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ReviewProduct'>;
 
+function money(value?: string) {
+  const numeric = parseFloat(value ?? '');
+  return Number.isNaN(numeric) ? '—' : `₹${numeric.toFixed(2)}`;
+}
+
 export function ReviewProductScreen({ navigation }: Props) {
-  const { draft, effectivePricing } = useProductDraft();
+  const { draft, effectivePricing: pricing } = useProductDraft();
   const basicInfo = draft.basicInfo;
-  // Falls back to the primary variant's price when this is an attribute-kind product
-  // (e.g. Fashion sizes), where pricing is set per-variant and draft.pricing stays empty.
-  const pricing = effectivePricing;
   const identifiers = draft.identifiers;
   const stock = draft.stock;
   const category = draft.category;
-  const variantCount = draft.packSize?.variants?.length ?? 0;
+  const perVariant = usesVariantPricing(draft.packSize);
+  const variants = perVariant ? draft.packSize?.variants ?? [] : [];
+  const sizeLabel = perVariant ? `${variants.length} variants` : packSizeLabel(draft.packSize) || '—';
   const gstLabel = draft.tax?.gstRate === '0' ? '0% (Exempt)' : draft.tax?.gstRate ? `${draft.tax.gstRate}%` : '—';
-  const discountPercent =
-    pricing && parseFloat(pricing.mrp) > parseFloat(pricing.sellingPrice || '0') && parseFloat(pricing.mrp) > 0
-      ? (
-          ((parseFloat(pricing.mrp) - parseFloat(pricing.sellingPrice || '0')) / parseFloat(pricing.mrp)) *
-          100
-        ).toFixed(1)
-      : '0';
+  const mrp = parseFloat(pricing?.mrp ?? '');
+  const sp = parseFloat(pricing?.sellingPrice ?? '');
+  const discountPercent = mrp > 0 && sp < mrp ? (((mrp - sp) / mrp) * 100).toFixed(1) : '0';
+  const openingStock = perVariant
+    ? variants.reduce((sum, variant) => sum + (parseInt(variant.stock, 10) || 0), 0)
+    : parseInt(stock?.opening ?? '', 10) || 0;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <NavHeader title="Review Product" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.summaryCard}>
-          <View style={styles.summaryIcon}>
-            <Icon name="package" size={28} color={colors.textTertiary} />
-          </View>
+          <ProductThumb
+            imageUrl={draft.images.images[0]}
+            style={styles.summaryIcon}
+            iconSize={28}
+            iconColor={colors.textTertiary}
+          />
           <View style={styles.summaryTextColumn}>
-            <Text style={styles.summaryName}>{basicInfo?.name || 'Untitled Product'}</Text>
+            <Text style={styles.summaryName}>{basicInfo?.name || '—'}</Text>
             <Text style={styles.summaryMeta}>
-              {basicInfo?.brand || '—'} · {draft.packSize ? `${draft.packSize.netWeight}${draft.packSize.unit.split(' ')[0]}` : '—'} ·{' '}
-              {category?.subcategoryName || category?.categoryName || '—'}
+              {basicInfo?.brand || 'No brand'} · {sizeLabel} · {category?.subcategoryName || category?.categoryName || '—'}
             </Text>
             <View style={styles.summaryPriceRow}>
-              <Text style={styles.summaryPrice}>₹{pricing?.sellingPrice || 0}</Text>
+              <Text style={styles.summaryPrice}>{money(pricing?.sellingPrice)}</Text>
               {pricing?.mrp && pricing.mrp !== pricing.sellingPrice ? (
-                <Text style={styles.summaryMrp}>₹{pricing.mrp}</Text>
+                <Text style={styles.summaryMrp}>{money(pricing.mrp)}</Text>
               ) : null}
-              <Badge label="Draft" tone="info" />
+              <Badge label="Not submitted" tone="info" />
             </View>
           </View>
         </View>
@@ -85,15 +90,43 @@ export function ReviewProductScreen({ navigation }: Props) {
         />
 
         <ReviewSectionCard
-          icon="percent"
-          title="Pricing"
-          onEdit={() => navigation.navigate('ProductMRP')}
+          icon="file-text"
+          title="Description"
+          onEdit={() => navigation.navigate('ProductDescriptionStep')}
+          rows={[{ label: 'Description', value: draft.description?.description || '—' }]}
+        />
+
+        {perVariant ? (
+          <ReviewSectionCard
+            icon="layers"
+            title="Variants"
+            onEdit={() => navigation.navigate('PackSizeVariant')}
+            rows={variants.map(variant => ({
+              label: `${variant.size}${variant.isPrimary ? ' (primary)' : ''}`,
+              value: `${money(variant.mrp)} → ${money(variant.sellingPrice)} · ${parseInt(variant.stock, 10) || 0} units`,
+            }))}
+          />
+        ) : (
+          <ReviewSectionCard
+            icon="percent"
+            title="Pack Size & Pricing"
+            onEdit={() => navigation.navigate('PackSizeVariant')}
+            rows={[
+              { label: 'Pack Size', value: sizeLabel },
+              { label: 'MRP', value: money(pricing?.mrp) },
+              { label: 'Selling Price', value: money(pricing?.sellingPrice) },
+              { label: 'Discount', value: `${discountPercent}%` },
+            ]}
+          />
+        )}
+
+        <ReviewSectionCard
+          icon="file-text"
+          title="Tax"
+          onEdit={() => navigation.navigate('ProductTaxInfo')}
           rows={[
-            { label: 'MRP', value: pricing?.mrp ? `₹${parseFloat(pricing.mrp).toFixed(2)}` : '—' },
-            { label: 'Selling Price', value: pricing?.sellingPrice ? `₹${parseFloat(pricing.sellingPrice).toFixed(2)}` : '—' },
-            { label: 'Discount', value: `${discountPercent}%` },
             { label: 'GST', value: gstLabel },
-            ...(variantCount > 1 ? [{ label: 'Note', value: `Primary of ${variantCount} variants shown` }] : []),
+            { label: 'HSN Code', value: draft.tax?.hsnCode || 'Not added' },
           ]}
         />
 
@@ -102,7 +135,7 @@ export function ReviewProductScreen({ navigation }: Props) {
           title="Identifiers"
           onEdit={() => navigation.navigate('ProductSKU')}
           rows={[
-            { label: 'SKU', value: identifiers?.sku || '—' },
+            { label: 'SKU', value: identifiers?.sku || 'Not added' },
             { label: 'Barcode', value: identifiers?.barcode || 'Not added' },
           ]}
         />
@@ -112,13 +145,14 @@ export function ReviewProductScreen({ navigation }: Props) {
           title="Stock"
           onEdit={() => navigation.navigate('ProductStockQuantity')}
           rows={[
-            { label: 'Opening Stock', value: `${stock?.opening ?? 0} units` },
-            { label: 'Reorder Level', value: `${stock?.reorderLevel ?? 0} units` },
+            { label: 'Opening Stock', value: `${openingStock} units` },
+            { label: 'Reorder Level', value: stock?.reorderLevel ? `${stock.reorderLevel} units` : 'Not set' },
+            { label: 'Max Stock', value: stock?.maxStock ? `${stock.maxStock} units` : 'Not set' },
           ]}
         />
 
         <View style={styles.footer}>
-          <Button label="Publish Product" onPress={() => navigation.navigate('PublishProduct')} />
+          <Button label="Continue to Publish" onPress={() => navigation.navigate('PublishProduct')} />
         </View>
       </ScrollView>
     </SafeAreaView>

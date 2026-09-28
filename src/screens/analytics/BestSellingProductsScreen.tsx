@@ -1,12 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, NavHeader, ScreenContainer } from '../../components';
-import { Icon } from '../../icons/Icon';
+import { NavHeader, ScreenContainer } from '../../components';
 import { useAnalytics } from '../../context/AnalyticsContext';
 import { colors, radii, spacing, typography } from '../../theme';
-import { AnalyticsFilterBar, AnalyticsPeriod } from './AnalyticsFilterBar';
+import { AnalyticsFilterBar } from './AnalyticsFilterBar';
 import { RankedProductRow } from './RankedProductRow';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'BestSellingProducts'>;
@@ -20,11 +19,11 @@ const TABS: { key: MetricTab; label: string }[] = [
 ];
 
 function formatInr(value: number) {
-  return `₹${value.toLocaleString('en-IN')}`;
+  return `₹${Math.round(value).toLocaleString('en-IN')}`;
 }
 
 export function BestSellingProductsScreen({ navigation }: Props) {
-  const { bestSellingProducts, period, setPeriod } = useAnalytics();
+  const { bestSellingProducts, isLoading } = useAnalytics();
   const [metric, setMetric] = useState<MetricTab>('revenue');
 
   const rankedProducts = useMemo(
@@ -32,16 +31,12 @@ export function BestSellingProductsScreen({ navigation }: Props) {
     [bestSellingProducts, metric],
   );
 
-  function handleExport() {
-    Alert.alert('Export List', 'Coming soon.');
-  }
-
   return (
     <ScreenContainer scrollable>
       <NavHeader title="Best Sellers" onBack={() => navigation.goBack()} />
 
       <View style={styles.filterBarWrap}>
-        <AnalyticsFilterBar value={period} onChange={setPeriod} />
+        <AnalyticsFilterBar />
       </View>
 
       <View style={styles.tabsWrap}>
@@ -62,10 +57,11 @@ export function BestSellingProductsScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.listSection}>
+        {!isLoading && rankedProducts.length === 0 ? (
+          <Text style={styles.emptyText}>No products sold in this period.</Text>
+        ) : null}
         {rankedProducts.map((product, index) => {
           const rank = index + 1;
-          // Bold "amount" always reflects the active sort metric; the subtitle mirrors
-          // Figma's "By Revenue" tab (units as the secondary line) for every other tab too.
           const amount =
             metric === 'revenue'
               ? formatInr(product.revenue)
@@ -76,7 +72,7 @@ export function BestSellingProductsScreen({ navigation }: Props) {
 
           return (
             <RankedProductRow
-              key={product.name}
+              key={`${product.name}-${index}`}
               rank={rank}
               name={product.name}
               subtitle={subtitle}
@@ -87,13 +83,6 @@ export function BestSellingProductsScreen({ navigation }: Props) {
         })}
       </View>
 
-      <View style={styles.footer}>
-        <Button
-          label="Export List"
-          onPress={handleExport}
-          icon={<Icon name="upload" size={16} color={colors.white} />}
-        />
-      </View>
     </ScreenContainer>
   );
 }
@@ -135,9 +124,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.lg,
   },
-  footer: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xxxl,
+  emptyText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    paddingVertical: spacing.xl,
   },
 });

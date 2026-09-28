@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -9,9 +9,10 @@ import {
   NotificationTab,
   useNotifications,
 } from '../../context/NotificationsContext';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
 import { ScreenContainer, IconCircle } from '../../components';
 import { Icon } from '../../icons/Icon';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Notifications'>;
@@ -32,19 +33,42 @@ const UNREAD_BLUE = '#1570EF';
 const UNDO_WINDOW_SECONDS = 5;
 
 export function NotificationsScreen({ navigation }: Props) {
-  const { notifications, unreadCount, markAsRead, markAllAsRead, undoMarkAllAsRead, refresh } = useNotifications();
+  const {
+    notifications,
+    unreadCount,
+    isLoading,
+    error,
+    markAsRead,
+    markAllAsRead,
+    undoMarkAllAsRead,
+    dismissNotification,
+    refresh,
+  } = useNotifications();
   const [activeTab, setActiveTab] = useState<NotificationTab>('all');
+  const [refreshing, setRefreshing] = useState(false);
+  const [markingAll, setMarkingAll] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       refresh().catch(() => {});
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []),
+    }, [refresh]),
   );
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } catch {
+      // error surfaced through context.error
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refresh]);
+
   const [toastVisible, setToastVisible] = useState(false);
   const [countdown, setCountdown] = useState(UNDO_WINDOW_SECONDS);
 
-  const previousRef = useRef<AppNotification[] | null>(null);
+  const undoIdsRef = useRef<string[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clearTimer = useCallback(() => {
@@ -56,9 +80,20 @@ export function NotificationsScreen({ navigation }: Props) {
 
   useEffect(() => () => clearTimer(), [clearTimer]);
 
-  const handleMarkAllRead = useCallback(() => {
-    previousRef.current = notifications;
-    markAllAsRead();
+  const handleMarkAllRead = useCallback(async () => {
+    if (markingAll || unreadCount === 0) return;
+    setMarkingAll(true);
+    let ids: string[];
+    try {
+      ids = await markAllAsRead();
+    } catch (err) {
+      Alert.alert('Could not mark all as read', getApiErrorMessage(err, 'Please try again.'));
+      return;
+    } finally {
+      setMarkingAll(false);
+    }
+    if (ids.length === 0) return;
+    undoIdsRef.current = ids;
     clearTimer();
     setCountdown(UNDO_WINDOW_SECONDS);
     setToastVisible(true);
@@ -67,21 +102,22 @@ export function NotificationsScreen({ navigation }: Props) {
         if (prev <= 1) {
           clearTimer();
           setToastVisible(false);
-          previousRef.current = null;
+          undoIdsRef.current = [];
           return UNDO_WINDOW_SECONDS;
         }
         return prev - 1;
       });
     }, 1000);
-  }, [notifications, markAllAsRead, clearTimer]);
+  }, [markingAll, unreadCount, markAllAsRead, clearTimer]);
 
   const handleUndo = useCallback(() => {
     clearTimer();
     setToastVisible(false);
-    if (previousRef.current) {
-      undoMarkAllAsRead(previousRef.current);
-      previousRef.current = null;
-    }
+    const ids = undoIdsRef.current;
+    undoIdsRef.current = [];
+    undoMarkAllAsRead(ids).catch(err => {
+      Alert.alert('Could not undo', getApiErrorMessage(err, 'Please try again.'));
+    });
   }, [clearTimer, undoMarkAllAsRead]);
 
   const filtered = useMemo(() => {
@@ -111,16 +147,36 @@ export function NotificationsScreen({ navigation }: Props) {
 
   const handlePressRow = useCallback(
     (item: AppNotification) => {
-      markAsRead(item.id);
-      const meta = NOTIFICATION_CATEGORY_META[item.category];
-      const navigateToDetail = navigation.navigate as (
-        name: typeof meta.route,
-        params: { notificationId: string },
-      ) => void;
-      navigateToDetail(meta.route, { notificationId: item.id });
+      markAsRead(item.id).catch(() => {});
+      navigation.navigate(getNotificationMeta(item.category).route, { notificationId: item.id });
     },
     [markAsRead, navigation],
   );
+
+  const handleLongPressRow = useCallback(
+    (item: AppNotification) => {
+      Alert.alert('Dismiss notification?', item.title, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Dismiss',
+          style: 'destructive',
+          onPress: () => {
+            dismissNotification(item.id).catch(err => {
+              Alert.alert('Could not dismiss', getApiErrorMessage(err, 'Please try again.'));
+            });
+          },
+        },
+      ]);
+    },
+    [dismissNotification],
+  );
+
+  const showEmpty = sections.length === 0;
+  const emptyMessage = error && notifications.length === 0
+    ? error
+    : activeTab === 'all'
+      ? 'No notifications yet'
+      : `No ${activeTab === 'unread' ? 'unread' : activeTab} notifications`;
 
   return (
     <ScreenContainer scrollable={false} edges={['top', 'left', 'right', 'bottom']}>
@@ -146,16 +202,23 @@ export function NotificationsScreen({ navigation }: Props) {
               <Text style={styles.countBadgeText}>{unreadCount}</Text>
             </View>
           ) : null}
-          <Pressable onPress={handleMarkAllRead} hitSlop={8}>
-            <Text style={styles.markAllRead}>Mark all read</Text>
+          <Pressable onPress={handleMarkAllRead} hitSlop={8} disabled={unreadCount === 0 || markingAll}>
+            <Text style={[styles.markAllRead, (unreadCount === 0 || markingAll) && styles.markAllReadDisabled]}>
+              Mark all read
+            </Text>
           </Pressable>
           <Pressable
             onPress={() => navigation.navigate('ClearNotifications')}
             hitSlop={8}
             style={styles.clearButton}
+            disabled={notifications.length === 0}
             accessibilityLabel="Clear all notifications"
           >
-            <Icon name="trash" size={18} color={colors.textSecondary} />
+            <Icon
+              name="trash"
+              size={18}
+              color={notifications.length === 0 ? colors.textTertiary : colors.textSecondary}
+            />
           </Pressable>
         </View>
       </View>
@@ -176,38 +239,59 @@ export function NotificationsScreen({ navigation }: Props) {
         })}
       </View>
 
-      <View style={styles.hintBar}>
-        <Text style={styles.hintText}>Swipe to dismiss</Text>
-      </View>
-
-      {sections.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Icon name="bell" size={40} color={colors.textTertiary} />
-          <Text style={styles.emptyText}>No notifications</Text>
+      {error && notifications.length > 0 ? (
+        <View style={styles.errorBar}>
+          <Text style={styles.errorText}>{error}</Text>
         </View>
-      ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={item => item.id}
-          stickySectionHeadersEnabled={false}
-          contentContainerStyle={styles.listContent}
-          renderSectionHeader={({ section }) => (
-            <View style={styles.sectionLabel}>
-              <Text style={styles.sectionLabelText}>{section.title}</Text>
-            </View>
-          )}
-          renderItem={({ item }) => <NotifRow item={item} onPress={() => handlePressRow(item)} />}
-        />
-      )}
+      ) : null}
+
+      <SectionList
+        sections={sections}
+        keyExtractor={item => item.id}
+        stickySectionHeadersEnabled={false}
+        contentContainerStyle={showEmpty ? styles.emptyListContent : styles.listContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Icon name="bell" size={40} color={colors.textTertiary} />
+            <Text style={styles.emptyText}>{isLoading && !refreshing ? 'Loading…' : emptyMessage}</Text>
+            {error && notifications.length === 0 && !isLoading ? (
+              <Pressable onPress={handleRefresh} hitSlop={8}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        }
+        renderSectionHeader={({ section }) => (
+          <View style={styles.sectionLabel}>
+            <Text style={styles.sectionLabelText}>{section.title}</Text>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <NotifRow item={item} onPress={() => handlePressRow(item)} onLongPress={() => handleLongPressRow(item)} />
+        )}
+      />
     </ScreenContainer>
   );
 }
 
-function NotifRow({ item, onPress }: { item: AppNotification; onPress: () => void }) {
-  const meta = NOTIFICATION_CATEGORY_META[item.category];
+function NotifRow({
+  item,
+  onPress,
+  onLongPress,
+}: {
+  item: AppNotification;
+  onPress: () => void;
+  onLongPress: () => void;
+}) {
+  const meta = getNotificationMeta(item.category);
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={400}
       style={[styles.row, { borderLeftColor: meta.accentColor }, !item.read && styles.rowUnread]}
     >
       <IconCircle
@@ -301,6 +385,9 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.primary,
   },
+  markAllReadDisabled: {
+    color: colors.textTertiary,
+  },
   clearButton: {
     width: 28,
     height: 28,
@@ -331,17 +418,20 @@ const styles = StyleSheet.create({
     ...typography.labelSemibold,
     color: colors.primary,
   },
-  hintBar: {
-    backgroundColor: colors.surface,
+  errorBar: {
+    backgroundColor: colors.errorSurface,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm,
   },
-  hintText: {
+  errorText: {
     ...typography.tiny,
-    color: colors.textSecondary,
+    color: colors.error,
   },
   listContent: {
     paddingBottom: spacing.huge,
+  },
+  emptyListContent: {
+    flexGrow: 1,
   },
   sectionLabel: {
     paddingHorizontal: spacing.xl,
@@ -404,9 +494,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.lg,
+    paddingHorizontal: spacing.xxl,
   },
   emptyText: {
     ...typography.body,
     color: colors.textTertiary,
+    textAlign: 'center',
+  },
+  retryText: {
+    ...typography.labelSemibold,
+    color: colors.primary,
   },
 });

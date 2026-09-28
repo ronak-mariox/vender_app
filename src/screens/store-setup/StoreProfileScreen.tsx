@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -6,15 +6,23 @@ import { Button, FormSectionCard, Input, NavHeader, ProgressSteps, ScreenContain
 import { Icon } from '../../icons/Icon';
 import { useStoreSetup } from '../../context/StoreSetupContext';
 import { useRegistration } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage } from '../../services/api';
+import { api } from '../../services/api';
+import { handleFormSaveError } from '../registration/registrationHelpers';
 import { isPositiveNumber, isRequired, type FormErrors } from '../../utils/validators';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StoreProfile'>;
 
-type Errors = FormErrors<
-  'storeName' | 'description' | 'primaryCategory' | 'subCategory' | 'tags' | 'minimumOrderValue' | 'avgPrepTime'
->;
+const FIELDS = [
+  'storeName',
+  'description',
+  'primaryCategory',
+  'subCategory',
+  'tags',
+  'minimumOrderValue',
+  'avgPrepTime',
+] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
 const CATEGORIES = ['Grocery & Essentials', 'Electronics', 'Fashion', 'Health & Beauty', 'Home & Kitchen'];
 const SUB_CATEGORIES = ['Kirana / General Store', 'Supermarket', 'Organic Store', 'Wholesale'];
@@ -27,24 +35,31 @@ export function StoreProfileScreen({ navigation }: Props) {
   const [storeName, setStoreName] = useState(
     data.profile?.storeName ?? registrationData.storeInfo?.storeName ?? '',
   );
-  const [description, setDescription] = useState(
-    data.profile?.description ??
-      'Fresh grocery and daily essentials delivered to your doorstep. Quality products at the best prices — from vegetables to packaged goods.',
-  );
+  const [description, setDescription] = useState(data.profile?.description ?? '');
   const [primaryCategory, setPrimaryCategory] = useState(
     data.profile?.primaryCategory ?? registrationData.businessInfo?.category ?? '',
   );
   const [subCategory, setSubCategory] = useState(data.profile?.subCategory ?? '');
-  const [tags, setTags] = useState<string[]>(() =>
-    Array.from(new Set(data.profile?.tags ?? ['Grocery', 'Fresh Produce', 'Daily Essentials', 'Home Delivery'])),
-  );
+  const [tags, setTags] = useState<string[]>(() => Array.from(new Set(data.profile?.tags ?? [])));
   const [newTag, setNewTag] = useState('');
   const [addingTag, setAddingTag] = useState(false);
   const committingTagRef = useRef(false);
-  const [minimumOrderValue, setMinimumOrderValue] = useState(data.profile?.minimumOrderValue ?? '150');
-  const [avgPrepTime, setAvgPrepTime] = useState(data.profile?.avgPrepTime ?? '30');
+  const [minimumOrderValue, setMinimumOrderValue] = useState(data.profile?.minimumOrderValue ?? '');
+  const [avgPrepTime, setAvgPrepTime] = useState(data.profile?.avgPrepTime ?? '');
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const profile = data.profile;
+    if (!profile) return;
+    setStoreName(profile.storeName);
+    setDescription(profile.description);
+    setPrimaryCategory(profile.primaryCategory);
+    setSubCategory(profile.subCategory);
+    setTags(Array.from(new Set(profile.tags ?? [])));
+    setMinimumOrderValue(profile.minimumOrderValue);
+    setAvgPrepTime(profile.avgPrepTime);
+  }, [data.profile]);
 
   function removeTag(tag: string) {
     setTags(prev => prev.filter(item => item !== tag));
@@ -92,7 +107,7 @@ export function StoreProfileScreen({ navigation }: Props) {
       updateProfile(profile);
       navigation.navigate('StoreLogoUpload');
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save your store profile. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -117,7 +132,7 @@ export function StoreProfileScreen({ navigation }: Props) {
               setStoreName(text);
               if (errors.storeName) setErrors(prev => ({ ...prev, storeName: undefined }));
             }}
-            placeholder="Sharma Kirana Store"
+            placeholder="Store name"
             helperText="Displayed to customers on Verdant"
             error={errors.storeName}
           />
@@ -217,7 +232,7 @@ export function StoreProfileScreen({ navigation }: Props) {
                   if (errors.minimumOrderValue) setErrors(prev => ({ ...prev, minimumOrderValue: undefined }));
                 }}
                 keyboardType="number-pad"
-                placeholder="150"
+                placeholder="e.g. 150"
                 error={errors.minimumOrderValue}
               />
             </View>
@@ -230,7 +245,7 @@ export function StoreProfileScreen({ navigation }: Props) {
                   if (errors.avgPrepTime) setErrors(prev => ({ ...prev, avgPrepTime: undefined }));
                 }}
                 keyboardType="number-pad"
-                placeholder="30"
+                placeholder="e.g. 30"
                 error={errors.avgPrepTime}
               />
             </View>

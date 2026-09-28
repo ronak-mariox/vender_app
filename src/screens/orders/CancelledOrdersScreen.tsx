@@ -10,16 +10,13 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'CancelledOrders'>;
 
 export function CancelledOrdersScreen({ navigation }: Props) {
   const { ordersByStatus } = useOrders();
-  const cancelledOrders = ordersByStatus(['cancelled']);
+  const cancelledOrders = ordersByStatus(['cancelled', 'rejected']);
 
   return (
     <OrderActionLayout
       title="Cancelled"
       onBack={() => navigation.goBack()}
-      banner={{
-        variant: 'error',
-        message: 'High cancellation rate may affect your store visibility. Review reasons.',
-      }}
+      emptyMessage="No cancelled or rejected orders"
       orders={cancelledOrders}
       onOrderPress={orderId => navigation.navigate('CancelledOrderDetails', { orderId })}
       renderOrderExtra={order =>

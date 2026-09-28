@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -43,36 +43,64 @@ const REVIEW_LABEL: Record<StepReviewStatus, string> = {
   rejected: 'Issue Found',
 };
 
+const POLL_INTERVAL_MS = 15000;
+
+type RegistrationStatus = {
+  status: string;
+  kycStatus: string;
+  referenceId: string | null;
+  rejectionReason: string | null;
+  stepReviews?: Partial<Record<string, StepReview>>;
+};
+
 export function KYCPendingScreen({ navigation }: Props) {
   const { data } = useRegistration();
   const [checking, setChecking] = useState(false);
-  const [submittedSteps, setSubmittedSteps] = useState<string[]>([]);
+  const [referenceId, setReferenceId] = useState<string | null>(data.referenceId ?? null);
   const [stepReviews, setStepReviews] = useState<Partial<Record<string, StepReview>>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const leftRef = useRef(false);
 
-  const loadStepStatus = useCallback(async () => {
-    try {
-      const { data: registration } = await api.get<Record<string, unknown>>('/vendor/registration');
-      setSubmittedSteps(STEP_ORDER.filter((key) => registration[key] != null));
-      setStepReviews((registration.stepReviews as Partial<Record<string, StepReview>>) ?? {});
-    } catch {
-      // Best-effort — the screen still works with the timeline/refresh button if this fails.
+  const checkStatus = useCallback(async () => {
+    const { data: status } = await api.get<RegistrationStatus>('/vendor/registration/status');
+    if (leftRef.current) return;
+    setLoadError(null);
+    if (status.referenceId) setReferenceId(status.referenceId);
+    setStepReviews(status.stepReviews ?? {});
+    if (status.status === 'active') {
+      leftRef.current = true;
+      navigation.replace('KYCApproved');
+    } else if (status.status === 'rejected') {
+      leftRef.current = true;
+      navigation.replace('KYCRejected', { rejectionReason: status.rejectionReason ?? undefined });
     }
-  }, []);
+  }, [navigation]);
 
   useEffect(() => {
-    loadStepStatus();
-  }, [loadStepStatus]);
+    leftRef.current = false;
+    const poll = () => {
+      checkStatus().catch(error => {
+        if (!leftRef.current) setLoadError(getApiErrorMessage(error, 'Could not load your application status.'));
+      });
+    };
+    poll();
+    const timer = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      leftRef.current = true;
+      clearInterval(timer);
+    };
+  }, [checkStatus]);
 
-  const documents = submittedSteps.map((key) => ({
+  const documents = STEP_ORDER.map((key) => ({
     label: STEP_LABELS[key],
     review: stepReviews[key]?.status ?? 'pending',
     note: stepReviews[key]?.note,
   }));
   const verifiedCount = documents.filter((d) => d.review === 'verified').length;
-  const allVerified = documents.length > 0 && verifiedCount === documents.length;
+  const allVerified = verifiedCount === documents.length;
 
   const timelineSteps = [
-    { label: 'Application Submitted', sublabel: `Reference ${data.referenceId ?? '—'}`, status: 'done' as const },
+    { label: 'Application Submitted', sublabel: `Reference ${referenceId ?? '—'}`, status: 'done' as const },
     {
       label: 'Document Verification',
       sublabel: allVerified ? 'All steps verified' : `${verifiedCount}/${documents.length} steps verified`,
@@ -84,21 +112,7 @@ export function KYCPendingScreen({ navigation }: Props) {
   async function handleRefresh() {
     setChecking(true);
     try {
-      const { data: status } = await api.get<{
-        status: string;
-        kycStatus: string;
-        referenceId: string | null;
-        rejectionReason: string | null;
-      }>('/vendor/registration/status');
-
-      if (status.status === 'active') {
-        navigation.replace('KYCApproved');
-      } else if (status.status === 'rejected') {
-        navigation.replace('KYCRejected', { rejectionReason: status.rejectionReason ?? undefined });
-      } else {
-        // Otherwise still pending (or suspended) — refresh the per-step checklist and stay.
-        await loadStepStatus();
-      }
+      await checkStatus();
     } catch (error) {
       Alert.alert('Could not refresh status', getApiErrorMessage(error, 'Please try again.'));
     } finally {
@@ -131,15 +145,12 @@ export function KYCPendingScreen({ navigation }: Props) {
 
         <View style={styles.referenceRow}>
           <Text style={styles.referenceLabel}>Reference ID:</Text>
-          <Text style={styles.referenceValue}>{data.referenceId ?? '—'}</Text>
-          <View style={styles.referenceSpacer} />
-          <Text
-            style={styles.copyText}
-            onPress={() => Alert.alert('Copied', `${data.referenceId} copied to clipboard.`)}
-          >
-            Copy
+          <Text style={styles.referenceValue} selectable>
+            {referenceId ?? '—'}
           </Text>
         </View>
+
+        {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
 
         <View style={styles.warningCard}>
           <View style={styles.warningHeader}>
@@ -147,8 +158,8 @@ export function KYCPendingScreen({ navigation }: Props) {
             <Text style={styles.warningTitle}>Document Verification in Progress</Text>
           </View>
           <Text style={styles.warningBody}>
-            Our team is reviewing your GST certificate, PAN, and business proof documents. This
-            typically takes 1–2 business days.
+            Our team is reviewing the details and documents you submitted. This screen checks for
+            updates automatically.
           </Text>
         </View>
 
@@ -159,27 +170,25 @@ export function KYCPendingScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {documents.length > 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Step-by-Step Status</Text>
-            <View style={styles.documentsList}>
-              {documents.map((doc, index) => (
-                <View
-                  key={doc.label}
-                  style={[styles.documentRow, index < documents.length - 1 && styles.documentRowDivider]}
-                >
-                  <View style={styles.documentTextColumn}>
-                    <Text style={styles.documentLabel}>{doc.label}</Text>
-                    {doc.review === 'rejected' && doc.note ? (
-                      <Text style={styles.documentNote}>{doc.note}</Text>
-                    ) : null}
-                  </View>
-                  <Badge label={REVIEW_LABEL[doc.review]} tone={REVIEW_TONE[doc.review]} />
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Step-by-Step Status</Text>
+          <View style={styles.documentsList}>
+            {documents.map((doc, index) => (
+              <View
+                key={doc.label}
+                style={[styles.documentRow, index < documents.length - 1 && styles.documentRowDivider]}
+              >
+                <View style={styles.documentTextColumn}>
+                  <Text style={styles.documentLabel}>{doc.label}</Text>
+                  {doc.review === 'rejected' && doc.note ? (
+                    <Text style={styles.documentNote}>{doc.note}</Text>
+                  ) : null}
                 </View>
-              ))}
-            </View>
+                <Badge label={REVIEW_LABEL[doc.review]} tone={REVIEW_TONE[doc.review]} />
+              </View>
+            ))}
           </View>
-        ) : null}
+        </View>
 
         <View style={styles.footer}>
           <Button
@@ -261,14 +270,6 @@ const styles = StyleSheet.create({
     ...typography.labelSemibold,
     color: colors.textPrimary,
   },
-  referenceSpacer: {
-    flex: 1,
-  },
-  copyText: {
-    ...typography.tiny,
-    fontFamily: fontFamilies.medium,
-    color: colors.primary,
-  },
   warningCard: {
     padding: spacing.xl,
     borderRadius: radii.xl,
@@ -338,6 +339,11 @@ const styles = StyleSheet.create({
   documentNote: {
     ...typography.caption,
     color: colors.error,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    textAlign: 'center',
   },
   footer: {
     gap: spacing.lg,

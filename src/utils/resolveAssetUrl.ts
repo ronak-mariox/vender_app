@@ -1,4 +1,4 @@
-import { API_ORIGIN } from '../services/api';
+import { API_ORIGIN } from '../config';
 
 /** Turns a backend-relative upload path (e.g. `/uploads/xyz.jpg`) into an absolute
  * URI an `<Image source={{uri}}>` can actually load. Already-absolute URLs pass through. */

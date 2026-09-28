@@ -5,22 +5,33 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, IconCircle, InfoBanner, ScreenContainer, StatusTimeline } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration } from '../../context/RegistrationContext';
+import axios from 'axios';
 import { api, getApiErrorMessage } from '../../services/api';
-import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { isRegistrationLockedError, showRegistrationLocked } from '../registration/registrationHelpers';
+import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'KYCSubmission'>;
 
-const TIMELINE_STEPS = [
-  { label: 'Application Submitted', sublabel: 'Today, 14:32 IST', status: 'done' as const },
-  { label: 'Document Verification', sublabel: 'Est. 1–2 business days', status: 'active' as const },
-  { label: 'Background Check', sublabel: 'Est. 1 business day', status: 'pending' as const },
-  { label: 'Account Activation', sublabel: 'Upon approval', status: 'pending' as const },
-];
+const STEP_SCREEN: Record<string, keyof AuthStackParamList> = {
+  'business-type': 'BusinessType',
+  'business-info': 'BusinessInfo',
+  'owner-info': 'OwnerInfo',
+  'store-info': 'StoreInfo',
+  'gst-details': 'GSTDetails',
+  'pan-details': 'PANVerification',
+  'business-proof': 'BusinessProof',
+  'bank-details': 'BankDetails',
+};
+
+function formatSubmittedAt(date: Date) {
+  return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
 export function KYCSubmissionScreen({ navigation }: Props) {
   const { setReferenceId } = useRegistration();
   const [referenceId, setLocalReferenceId] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(true);
+  const [submittedAt, setSubmittedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,8 +43,24 @@ export function KYCSubmissionScreen({ navigation }: Props) {
         if (cancelled) return;
         setReferenceId(data.referenceId);
         setLocalReferenceId(data.referenceId);
+        setSubmittedAt(new Date());
       } catch (error) {
         if (cancelled) return;
+        if (isRegistrationLockedError(error)) {
+          showRegistrationLocked();
+          return;
+        }
+        const missingSteps =
+          axios.isAxiosError(error) && error.response?.status === 422
+            ? ((error.response.data as { missingSteps?: string[] } | undefined)?.missingSteps ?? [])
+            : [];
+        const firstMissing = missingSteps.map(step => STEP_SCREEN[step]).find(Boolean);
+        if (firstMissing) {
+          Alert.alert('Application incomplete', 'Please complete the remaining registration steps before submitting.', [
+            { text: 'Continue', onPress: () => navigation.replace(firstMissing as 'BusinessType') },
+          ]);
+          return;
+        }
         Alert.alert(
           'Submission failed',
           getApiErrorMessage(error, 'Could not submit your application. Please review your details and try again.'),
@@ -64,6 +91,16 @@ export function KYCSubmissionScreen({ navigation }: Props) {
     return null;
   }
 
+  const timelineSteps = [
+    {
+      label: 'Application Submitted',
+      sublabel: submittedAt ? formatSubmittedAt(submittedAt) : 'Just now',
+      status: 'done' as const,
+    },
+    { label: 'Document Verification', sublabel: 'Reviewed by our team', status: 'active' as const },
+    { label: 'Account Activation', sublabel: 'Upon approval', status: 'pending' as const },
+  ];
+
   return (
     <ScreenContainer scrollable>
       <View style={styles.content}>
@@ -71,23 +108,19 @@ export function KYCSubmissionScreen({ navigation }: Props) {
           <IconCircle icon="check" size={96} iconSize={52} />
           <Text style={styles.heading}>Application Submitted!</Text>
           <Text style={styles.subtitle}>
-            Your KYC application has been received.{'\n'}Our team will review it within 2–3 business
-            days.
+            Your KYC application has been received.{'\n'}Our team will review it and update your
+            status in the app.
           </Text>
         </View>
 
         <View style={styles.referenceCard}>
           <View style={styles.referenceHeader}>
             <Text style={styles.referenceLabel}>Reference ID</Text>
-            <Text
-              style={styles.copyText}
-              onPress={() => Alert.alert('Copied', `${referenceId} copied to clipboard.`)}
-            >
-              Copy
-            </Text>
           </View>
           <View style={styles.referenceValueBox}>
-            <Text style={styles.referenceValue}>{referenceId}</Text>
+            <Text style={styles.referenceValue} selectable>
+              {referenceId}
+            </Text>
           </View>
           <Text style={styles.referenceHint}>Save this ID to track your application status</Text>
         </View>
@@ -95,13 +128,13 @@ export function KYCSubmissionScreen({ navigation }: Props) {
         <View style={styles.statusCard}>
           <Text style={styles.statusTitle}>Application Status</Text>
           <View style={styles.timelineWrapper}>
-            <StatusTimeline steps={TIMELINE_STEPS} />
+            <StatusTimeline steps={timelineSteps} />
           </View>
         </View>
 
         <InfoBanner
           variant="success"
-          message="You'll receive SMS and email updates at each verification step. Average approval time is 48 hours."
+          message="You can check your verification status in the app at any time."
         />
 
         <View style={styles.footer}>
@@ -170,11 +203,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.72,
-  },
-  copyText: {
-    ...typography.caption,
-    fontFamily: fontFamilies.medium,
-    color: colors.primary,
   },
   referenceValueBox: {
     alignItems: 'center',

@@ -1,13 +1,14 @@
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
+import { GST_ON_FEE_PERCENT_LABEL, PLATFORM_FEE_PERCENT_LABEL } from '../../constants/fees';
 import { colors, radii, spacing, typography } from '../../theme';
 import { PolicyMetaBar } from './PolicyMetaBar';
 import { PolicySection } from './PolicySection';
-import { PolicyScrollFooter } from './PolicyScrollFooter';
+import { usePolicyScroll } from './usePolicyScroll';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PolicySettlement'>;
 
@@ -15,16 +16,14 @@ type TimelineStep = {
   key: string;
   lineOne: string;
   lineTwo: string;
-  day: string;
   isFinal?: boolean;
 };
 
 const TIMELINE_STEPS: TimelineStep[] = [
-  { key: 'order', lineOne: 'Order', lineTwo: 'Delivered', day: 'Day 0' },
-  { key: 'wait', lineOne: '48hr', lineTwo: 'Wait', day: 'Day 2' },
-  { key: 'settlement', lineOne: 'Settlement', lineTwo: 'Initiated', day: 'Day 8' },
-  { key: 'bank', lineOne: 'Bank', lineTwo: 'Processing', day: 'Day 9' },
-  { key: 'amount', lineOne: 'Amount', lineTwo: 'Credited', day: 'Day 10', isFinal: true },
+  { key: 'order', lineOne: 'Order', lineTwo: 'Delivered' },
+  { key: 'settlement', lineOne: 'Settlement', lineTwo: 'Recorded' },
+  { key: 'batch', lineOne: 'Payout', lineTwo: 'Batch' },
+  { key: 'amount', lineOne: 'Amount', lineTwo: 'Credited', isFinal: true },
 ];
 
 type DeductionRow = {
@@ -33,17 +32,18 @@ type DeductionRow = {
 };
 
 const DEDUCTION_ROWS: DeductionRow[] = [
-  { label: 'Platform Commission', value: '8% of net sales' },
-  { label: 'GST on Commission', value: '18% of commission' },
-  { label: 'Other deductions', value: 'As applicable' },
+  { label: 'Platform Commission', value: `${PLATFORM_FEE_PERCENT_LABEL} of items total` },
+  { label: 'GST on Commission', value: `${GST_ON_FEE_PERCENT_LABEL} of commission` },
 ];
 
 export function PolicySettlementScreen({ navigation }: Props) {
+  const { progress, scrollProps } = usePolicyScroll();
+
   return (
     <ScreenContainer edges={['top', 'left', 'right', 'bottom']}>
       <NavHeader title="Settlement Policy" onBack={() => navigation.goBack()} />
-      <PolicyMetaBar lastUpdatedLabel="1 Oct 2024" />
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <PolicyMetaBar scrollProgress={progress} />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} {...scrollProps}>
         <View style={styles.section}>
           <Text style={styles.heading}>SETTLEMENT TIMELINE</Text>
           <View style={styles.timelineRow}>
@@ -63,23 +63,22 @@ export function PolicySettlementScreen({ navigation }: Props) {
                 <Text style={styles.timelineLabel} numberOfLines={1}>
                   {step.lineTwo}
                 </Text>
-                <Text style={styles.timelineDay}>{step.day}</Text>
               </View>
             ))}
           </View>
         </View>
 
         <PolicySection
-          heading="SETTLEMENT CYCLE"
+          heading="SETTLEMENT RECORDS"
           paragraphs={[
-            'Settlements are processed every Monday for all orders delivered between the preceding Tuesday and Sunday. Funds are initiated to your registered bank account by end of business Monday.',
+            'A settlement is recorded automatically for each order as soon as it is delivered. You can see every settlement, with its commission breakdown, under Payments.',
           ]}
         />
 
         <PolicySection
-          heading="ELIGIBLE ORDERS"
+          heading="PAYOUTS"
           paragraphs={[
-            'An order is eligible for settlement once it has been delivered and no dispute has been raised for 48 hours from the confirmed delivery timestamp.',
+            'Recorded settlements are grouped into payout batches and transferred to the bank account on your profile. The status of each batch is shown under Payments.',
           ]}
         />
 
@@ -103,31 +102,19 @@ export function PolicySettlementScreen({ navigation }: Props) {
         </View>
 
         <PolicySection
-          heading="BANK PROCESSING"
+          heading="WHAT YOU RECEIVE"
           paragraphs={[
-            'After settlement is initiated by Verdant, allow 1–2 business days for your bank to credit the amount to your account. NEFT/IMPS timings apply.',
+            'Your payout for an order is the items total plus tax, less the platform commission and GST on that commission. Delivery charges, platform fees and platform-funded coupons do not affect your payout.',
           ]}
         />
 
         <PolicySection
-          heading="DISPUTES"
+          heading="CANCELLED ORDERS"
           paragraphs={[
-            'Orders with an active dispute will have their settlement amount withheld until the dispute is resolved. Verdant aims to resolve disputes within 5 business days.',
-          ]}
-        />
-
-        <PolicySection
-          heading="MINIMUM PAYOUT"
-          paragraphs={[
-            'A minimum payout threshold of ₹100 applies. Balances below this amount will roll over to the next settlement cycle automatically.',
+            'Orders that are cancelled or rejected are never delivered, so no settlement is recorded for them.',
           ]}
         />
       </ScrollView>
-      <PolicyScrollFooter
-        mode="download-only"
-        downloadLabel="Download Policy PDF"
-        onDownload={() => Alert.alert('Download', 'Coming soon.')}
-      />
     </ScreenContainer>
   );
 }
@@ -193,14 +180,6 @@ const styles = StyleSheet.create({
     fontFamily: typography.tinyBold.fontFamily,
     color: colors.textPrimary,
     textAlign: 'center',
-  },
-  timelineDay: {
-    ...typography.tiny,
-    fontSize: 10,
-    lineHeight: 13,
-    color: colors.textTertiary,
-    textAlign: 'center',
-    paddingTop: 2,
   },
   deductionsCard: {
     borderWidth: 1,

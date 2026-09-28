@@ -1,36 +1,38 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ANALYTICS_PERIOD_LABELS, AnalyticsPeriod, useAnalytics } from '../../context/AnalyticsContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
-export type AnalyticsPeriod = 'today' | 'week' | 'month' | 'custom';
+const PERIODS = (Object.keys(ANALYTICS_PERIOD_LABELS) as AnalyticsPeriod[]).map(key => ({
+  key,
+  label: ANALYTICS_PERIOD_LABELS[key],
+}));
 
-const PERIODS: { key: AnalyticsPeriod; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'week', label: 'This Week' },
-  { key: 'month', label: 'This Month' },
-  { key: 'custom', label: 'Custom' },
-];
-
-type Props = {
-  value: AnalyticsPeriod;
-  onChange: (value: AnalyticsPeriod) => void;
-};
-
-export function AnalyticsFilterBar({ value, onChange }: Props) {
+/** Period pills bound to AnalyticsContext, plus the shared loading/error line for every analytics screen. */
+export function AnalyticsFilterBar() {
+  const { period, setPeriod, isLoading, error, refresh } = useAnalytics();
   return (
-    <View style={styles.row}>
-      {PERIODS.map(period => {
-        const active = period.key === value;
-        return (
-          <Pressable
-            key={period.key}
-            style={[styles.pill, active && styles.pillActive]}
-            onPress={() => onChange(period.key)}
-          >
-            <Text style={[styles.label, active && styles.labelActive]}>{period.label}</Text>
-          </Pressable>
-        );
-      })}
+    <View>
+      <View style={styles.row}>
+        {PERIODS.map(item => {
+          const active = item.key === period;
+          return (
+            <Pressable
+              key={item.key}
+              style={[styles.pill, active && styles.pillActive]}
+              onPress={() => setPeriod(item.key)}
+            >
+              <Text style={[styles.label, active && styles.labelActive]}>{item.label}</Text>
+            </Pressable>
+          );
+        })}
+        {isLoading ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+      </View>
+      {error ? (
+        <Pressable style={styles.errorBox} onPress={refresh}>
+          <Text style={styles.errorText}>{error} Tap to retry.</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -38,7 +40,18 @@ export function AnalyticsFilterBar({ value, onChange }: Props) {
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
+  },
+  errorBox: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.sm,
+    backgroundColor: colors.errorSurface,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
   },
   pill: {
     paddingHorizontal: spacing.lg,

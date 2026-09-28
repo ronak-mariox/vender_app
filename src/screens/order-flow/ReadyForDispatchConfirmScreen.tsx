@@ -1,86 +1,133 @@
-import React, { useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
-import { useOrders } from '../../context/OrdersContext';
-import { getApiErrorMessage } from '../../services/api';
+import { ORDER_STATUS_META, VENDOR_CANCELLABLE_STATUSES } from '../../context/OrdersContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { FlowStatusScreen } from './FlowStatusScreen';
 import { FlexButton } from './FlexButton';
+import { formatMoney, statusEventTime, useOrder } from '../orders/orderHelpers';
+import { OrderLoadState } from '../orders/OrderLoadState';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ReadyForDispatchConfirm'>;
 
 export function ReadyForDispatchConfirmScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const { getOrder, markPacked } = useOrders();
-  const order = getOrder(orderId);
-  const [confirming, setConfirming] = useState(false);
-  if (!order) return null;
+  const { order, loading, error, retry } = useOrder(orderId);
 
-  async function handleConfirm() {
-    if (confirming) return;
-    setConfirming(true);
-    try {
-      await markPacked(orderId);
-      navigation.replace('DispatchQueue', { orderId });
-    } catch (err) {
-      Alert.alert('Could not update order', getApiErrorMessage(err));
-    } finally {
-      setConfirming(false);
-    }
+  if (!order) {
+    return (
+      <OrderLoadState
+        title="Ready for Pickup"
+        loading={loading}
+        error={error}
+        onBack={() => navigation.goBack()}
+        onRetry={retry}
+      />
+    );
   }
+
+  const isReady = order.status === 'ready_for_pickup';
+  const hasPartner = !!order.driverId;
+  const canCancel = VENDOR_CANCELLABLE_STATUSES.includes(order.status);
+  const heading = !isReady
+    ? ORDER_STATUS_META[order.status].label
+    : hasPartner
+      ? 'Delivery Partner Assigned'
+      : 'Waiting for Delivery Partner';
+  const subtitle = !isReady
+    ? `${order.orderNumber} has moved on from “Ready for Pickup”.`
+    : hasPartner
+      ? 'Hand the packed order to the partner when they arrive.'
+      : 'The order is packed. A delivery partner will be assigned automatically — keep it at your counter.';
+  const driver = order.driver;
 
   return (
     <FlowStatusScreen
-      headerTitle="Ready for Dispatch"
+      headerTitle="Ready for Pickup"
       onBack={() => navigation.goBack()}
-      icon="truck"
+      icon={hasPartner ? 'bike' : 'truck'}
       iconColor="#0891B2"
       iconBg="#ECFEFF"
       iconRingColor="#A5F3FC"
-      heading="Mark Ready for Dispatch?"
-      subtitle="Once marked ready, the system will assign a delivery partner automatically."
+      heading={heading}
+      subtitle={subtitle}
       footer={
-        <FlexButton
-          label={confirming ? 'Updating…' : 'Mark Ready for Dispatch'}
-          onPress={handleConfirm}
-          background="#0891B2"
-          textColor={colors.white}
-          flex={1}
-          disabled={confirming}
-        />
+        <View style={styles.footerColumn}>
+          <View style={styles.footerRow}>
+            <FlexButton
+              label="Back to Dashboard"
+              onPress={() => navigation.popToTop()}
+              background={colors.white}
+              textColor={colors.textSecondary}
+              borderColor={colors.border}
+              flex={1}
+            />
+            <FlexButton
+              label={order.status === 'out_for_delivery' ? 'Track Order' : 'Order Details'}
+              onPress={() =>
+                order.status === 'out_for_delivery'
+                  ? navigation.replace('OrderDispatched', { orderId })
+                  : navigation.navigate('OrderDetails', { orderId })
+              }
+              background="#0891B2"
+              textColor={colors.white}
+              flex={1}
+            />
+          </View>
+          {canCancel ? (
+            <Pressable hitSlop={8} onPress={() => navigation.navigate('VendorCancelOrder', { orderId })}>
+              <Text style={styles.cancelLink}>Cancel order</Text>
+            </Pressable>
+          ) : null}
+        </View>
       }
     >
       <View style={styles.detailCard}>
         <View style={[styles.row, styles.rowDivider]}>
           <Text style={styles.label}>Order</Text>
-          <Text style={styles.value}>{order.id}</Text>
+          <Text style={styles.value}>{order.orderNumber}</Text>
         </View>
         <View style={[styles.row, styles.rowDivider]}>
           <Text style={styles.label}>Customer</Text>
-          <Text style={styles.value}>
-            {order.customerName}, {order.location.split(',').pop()?.trim() ?? order.location}
-          </Text>
+          <Text style={styles.value}>{order.customerName}</Text>
         </View>
         <View style={[styles.row, styles.rowDivider]}>
           <Text style={styles.label}>Items</Text>
           <Text style={styles.value}>
-            {order.products.length} items · ₹{order.amount}
+            {order.itemsCount} items · {formatMoney(order.amount)}
           </Text>
         </View>
         <View style={[styles.row, styles.rowLast]}>
-          <Text style={styles.label}>Expected delivery</Text>
-          <Text style={styles.value}>By 12:00 PM today</Text>
+          <Text style={styles.label}>Marked ready</Text>
+          <Text style={styles.value}>{statusEventTime(order, 'ready_for_pickup') || '—'}</Text>
         </View>
       </View>
 
-      <View style={styles.noteRow}>
-        <Icon name="info" size={13} color={colors.textSecondary} />
-        <Text style={styles.noteText}>
-          Delivery partner assignment is managed by the system. Keep the order at your counter.
-        </Text>
-      </View>
+      {hasPartner ? (
+        <View style={styles.noteRow}>
+          <Icon name="user" size={13} color={colors.textSecondary} />
+          <View style={styles.partnerColumn}>
+            <Text style={styles.partnerName}>{driver?.name ?? 'Delivery partner'}</Text>
+            {driver?.vehicle || driver?.plate ? (
+              <Text style={styles.noteText}>{[driver?.vehicle, driver?.plate].filter(Boolean).join(' · ')}</Text>
+            ) : null}
+          </View>
+          {driver?.phone ? (
+            <Pressable hitSlop={8} onPress={() => Linking.openURL(`tel:${driver.phone}`)}>
+              <Icon name="phone" size={16} color={colors.primary} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : (
+        <View style={styles.noteRow}>
+          <Icon name="info" size={13} color={colors.textSecondary} />
+          <Text style={styles.noteText}>
+            Delivery partner assignment is managed by the platform. This screen updates automatically.
+          </Text>
+        </View>
+      )}
     </FlowStatusScreen>
   );
 }
@@ -125,6 +172,26 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.lg,
     marginTop: spacing.lg,
+  },
+  footerColumn: {
+    gap: spacing.md,
+  },
+  footerRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  cancelLink: {
+    ...typography.captionSemibold,
+    color: colors.error,
+    textAlign: 'center',
+  },
+  partnerColumn: {
+    flex: 1,
+    gap: 2,
+  },
+  partnerName: {
+    ...typography.captionSemibold,
+    color: colors.textPrimary,
   },
   noteText: {
     ...typography.tiny,

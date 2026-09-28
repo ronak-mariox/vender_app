@@ -1,14 +1,9 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../../icons/Icon';
-import { Settlement, SettlementStatus } from '../../context/PaymentsContext';
+import type { Settlement } from '../../context/PaymentsContext';
 import { colors, radii, spacing, typography } from '../../theme';
-
-const STATUS_META: Record<SettlementStatus, { label: string; background: string; text: string }> = {
-  paid: { label: 'Paid', background: colors.primarySurface, text: colors.primary },
-  pending: { label: 'Pending', background: colors.warningSurface, text: colors.warningDark },
-  failed: { label: 'Failed', background: colors.errorSurface, text: colors.error },
-};
+import { SETTLEMENT_STATUS_META, formatINR } from './settlementHelpers';
 
 type Props = {
   settlement: Settlement;
@@ -16,15 +11,15 @@ type Props = {
 };
 
 export function SettlementRow({ settlement, onPress }: Props) {
-  const status = STATUS_META[settlement.status];
+  const status = SETTLEMENT_STATUS_META[settlement.status];
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.textColumn}>
-        <Text style={styles.id}>{settlement.id}</Text>
+        <Text style={styles.id}>{settlement.shortRef}</Text>
         <Text style={styles.dateRange}>{settlement.dateRangeLabel}</Text>
       </View>
       <View style={styles.amountColumn}>
-        <Text style={styles.amount}>₹{settlement.netPayout.toLocaleString('en-IN')}</Text>
+        <Text style={styles.amount}>{formatINR(settlement.netPayout)}</Text>
         <View style={[styles.statusChip, { backgroundColor: status.background }]}>
           <Text style={[styles.statusText, { color: status.text }]}>{status.label}</Text>
         </View>

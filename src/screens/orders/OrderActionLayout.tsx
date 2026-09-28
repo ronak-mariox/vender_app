@@ -1,9 +1,10 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Icon } from '../../icons/Icon';
 import { InfoBanner, OrderRow, BannerVariant } from '../../components';
-import { Order } from '../../context/OrdersContext';
+import { Order, useOrders } from '../../context/OrdersContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = {
@@ -13,6 +14,7 @@ type Props = {
   rightLink?: { label: string; onPress: () => void };
   banner?: { variant: BannerVariant; message: string };
   orders: Order[];
+  emptyMessage?: string;
   onOrderPress: (orderId: string) => void;
   renderOrderExtra?: (order: Order) => React.ReactNode;
   beforeOrders?: React.ReactNode;
@@ -27,12 +29,33 @@ export function OrderActionLayout({
   rightLink,
   banner,
   orders,
+  emptyMessage = 'No orders here',
   onOrderPress,
   renderOrderExtra,
   beforeOrders,
   children,
   footer,
 }: Props) {
+  const { refreshOrders, loading, error } = useOrders();
+  const [refreshing, setRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshOrders().catch(() => undefined);
+    }, [refreshOrders]),
+  );
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshOrders();
+    } catch {
+      // error is surfaced through context state
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
@@ -54,10 +77,19 @@ export function OrderActionLayout({
         ) : null}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      >
         {banner ? (
           <View style={styles.bannerWrapper}>
             <InfoBanner variant={banner.variant} message={banner.message} />
+          </View>
+        ) : null}
+
+        {error && orders.length === 0 ? (
+          <View style={styles.bannerWrapper}>
+            <InfoBanner variant="error" message={error} />
           </View>
         ) : null}
 
@@ -71,6 +103,19 @@ export function OrderActionLayout({
             </View>
           ))}
         </View>
+
+        {orders.length === 0 ? (
+          <View style={styles.emptyState}>
+            {loading && !refreshing ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <>
+                <Icon name="package" size={32} color={colors.textTertiary} />
+                <Text style={styles.emptyText}>{emptyMessage}</Text>
+              </>
+            )}
+          </View>
+        ) : null}
 
         {children}
       </ScrollView>
@@ -133,6 +178,15 @@ const styles = StyleSheet.create({
   },
   ordersCard: {
     marginTop: spacing.xl,
+  },
+  emptyState: {
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.massive,
+  },
+  emptyText: {
+    ...typography.body,
+    color: colors.textSecondary,
   },
   footer: {
     flexDirection: 'row',

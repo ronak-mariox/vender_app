@@ -21,7 +21,7 @@ export function OrderRow({ order, onPress, showChip = true }: Props) {
       </View>
       <View style={styles.textColumn}>
         <View style={styles.topRow}>
-          <Text style={styles.orderId}>{order.id}</Text>
+          <Text style={styles.orderId}>{order.orderNumber}</Text>
           <Text style={styles.time}>{order.timeLabel}</Text>
         </View>
         <Text style={styles.customerLine} numberOfLines={1}>

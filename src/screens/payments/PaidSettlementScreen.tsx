@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -6,22 +6,18 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { usePayments } from '../../context/PaymentsContext';
-import { PeriodFilterBar, PaymentsPeriod } from './PeriodFilterBar';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import { formatINR, sumBy } from './settlementHelpers';
 import { SettlementRow } from './SettlementRow';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PaidSettlement'>;
 
-function formatINR(amount: number) {
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
-}
-
 export function PaidSettlementScreen({ navigation }: Props) {
-  const { settlements } = usePayments();
-  const [period, setPeriod] = useState<PaymentsPeriod>('month');
+  const { filteredSettlements, periodLabel } = usePayments();
 
-  const paidSettlements = useMemo(() => settlements.filter(s => s.status === 'paid'), [settlements]);
-  const paidTotal = useMemo(() => paidSettlements.reduce((sum, s) => sum + s.netPayout, 0), [paidSettlements]);
+  const paidSettlements = useMemo(() => filteredSettlements.filter(s => s.status === 'paid'), [filteredSettlements]);
+  const paidTotal = useMemo(() => sumBy(paidSettlements, s => s.netPayout), [paidSettlements]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -29,13 +25,13 @@ export function PaidSettlementScreen({ navigation }: Props) {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.summaryCard}>
           <View style={styles.summaryTextColumn}>
-            <Text style={styles.summaryLabel}>Total Settled This Month</Text>
+            <Text style={styles.summaryLabel}>Total Settled · {periodLabel}</Text>
             <Text style={styles.summaryValue}>{formatINR(paidTotal)}</Text>
           </View>
           <Icon name="check-circle" size={24} color={colors.primary} />
         </View>
 
-        <PeriodFilterBar value={period} onChange={setPeriod} />
+        <PeriodFilterBar />
 
         <View style={styles.listCard}>
           {paidSettlements.map(settlement => (
@@ -45,7 +41,7 @@ export function PaidSettlementScreen({ navigation }: Props) {
               onPress={() => navigation.navigate('SettlementDetails', { settlementId: settlement.id })}
             />
           ))}
-          {paidSettlements.length === 0 ? <Text style={styles.emptyText}>No paid settlements yet.</Text> : null}
+          {paidSettlements.length === 0 ? <Text style={styles.emptyText}>No paid settlements in this period.</Text> : null}
         </View>
       </ScrollView>
     </SafeAreaView>

@@ -1,31 +1,77 @@
-import React from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { StockEvent, useInventory } from '../../context/InventoryContext';
+import { getApiErrorMessage } from '../../services/api';
 import { formatEventTimestamp } from '../../utils/time';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'InventoryHistory'>;
+
+type DirectionFilter = 'all' | 'added' | 'removed';
+
+const FILTERS: { key: DirectionFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'added', label: 'Added' },
+  { key: 'removed', label: 'Removed' },
+];
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function InventoryHistoryScreen({ navigation, route }: Props) {
   const productId = route.params?.productId;
   const { products } = useProductCatalog();
-  const { events, eventsForProduct } = useInventory();
+  const { events, eventsError, refreshEvents, fetchProductHistory } = useInventory();
+  const [productEvents, setProductEvents] = useState<StockEvent[]>([]);
+  const [productError, setProductError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!!productId);
+  const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState<DirectionFilter>('all');
 
   const product = productId ? products.find(item => item.id === productId) : undefined;
-  const scopedEvents = productId ? eventsForProduct(productId) : events;
+
+  const load = useCallback(async () => {
+    if (productId) {
+      try {
+        setProductEvents(await fetchProductHistory(productId));
+        setProductError(null);
+      } catch (err) {
+        setProductError(getApiErrorMessage(err));
+      }
+    } else {
+      await refreshEvents().catch(() => undefined);
+    }
+  }, [productId, fetchProductHistory, refreshEvents]);
+
+  useEffect(() => {
+    load().finally(() => setLoading(false));
+  }, [load]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
+
+  const scopedEvents = productId ? productEvents : events;
+  const error = productId ? productError : eventsError;
+  const visibleEvents = useMemo(
+    () =>
+      scopedEvents.filter(event =>
+        filter === 'all' ? true : filter === 'added' ? event.delta > 0 : event.delta < 0,
+      ),
+    [scopedEvents, filter],
+  );
 
   const cutoff = Date.now() - THIRTY_DAYS_MS;
   const added30d = scopedEvents
     .filter(event => event.delta > 0 && event.timestamp >= cutoff)
     .reduce((sum, event) => sum + event.delta, 0);
-  const sold30d = scopedEvents
+  const removed30d = scopedEvents
     .filter(event => event.delta < 0 && event.timestamp >= cutoff)
     .reduce((sum, event) => sum + Math.abs(event.delta), 0);
 
@@ -39,41 +85,51 @@ export function InventoryHistoryScreen({ navigation, route }: Props) {
           <Text style={styles.headerTitle}>Stock History</Text>
           <Text style={styles.headerSubtitle}>{product ? product.name : 'All products'}</Text>
         </View>
-        {productId ? (
-          <Pressable
-            style={styles.iconButton}
-            onPress={() => Alert.alert('Filter History', 'Coming soon.')}
-          >
-            <Icon name="sliders" size={15} color={colors.textPrimary} />
-          </Pressable>
-        ) : null}
       </View>
 
-      {product ? (
-        <View style={styles.summaryRow}>
+      <View style={styles.summaryRow}>
+        {product ? (
           <View style={styles.currentPill}>
             <Text style={styles.currentLabel}>Current</Text>
             <Text style={styles.currentValue}>{product.stock}</Text>
           </View>
-          <View style={styles.summaryTextColumn}>
-            <Text style={styles.summaryText}>+{added30d} added in last 30 days</Text>
-            <Text style={styles.summaryText}>−{sold30d} sold in last 30 days</Text>
-          </View>
+        ) : null}
+        <View style={styles.summaryTextColumn}>
+          <Text style={styles.summaryText}>+{added30d} added in last 30 days</Text>
+          <Text style={styles.summaryText}>−{removed30d} removed in last 30 days</Text>
         </View>
-      ) : null}
+      </View>
+
+      <View style={styles.filterRow}>
+        {FILTERS.map(item => {
+          const active = item.key === filter;
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => setFilter(item.key)}
+              style={[styles.filterChip, active && styles.filterChipActive]}
+            >
+              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{item.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       <FlatList
-        data={scopedEvents}
+        data={visibleEvents}
         keyExtractor={item => item.id}
         style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing || loading} onRefresh={handleRefresh} />}
         renderItem={({ item, index }) => (
-          <EventRow event={item} last={index === scopedEvents.length - 1} showProductName={!productId} />
+          <EventRow event={item} last={index === visibleEvents.length - 1} showProductName={!productId} />
         )}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Icon name="refresh-cw" size={32} color={colors.textTertiary} />
-            <Text style={styles.emptyText}>No stock events yet</Text>
-          </View>
+          loading ? null : (
+            <View style={styles.emptyState}>
+              <Icon name={error ? 'alert-circle' : 'clock'} size={32} color={error ? colors.error : colors.textTertiary} />
+              <Text style={styles.emptyText}>{error ?? 'No stock updates yet'}</Text>
+            </View>
+          )
         }
       />
     </SafeAreaView>
@@ -114,6 +170,31 @@ function EventRow({ event, last, showProductName }: { event: StockEvent; last: b
 }
 
 const styles = StyleSheet.create({
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
+  },
+  filterChip: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  filterChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySurface,
+  },
+  filterChipText: {
+    ...typography.captionSemibold,
+    color: colors.textSecondary,
+  },
+  filterChipTextActive: {
+    color: colors.primary,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: colors.surface,

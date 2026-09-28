@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { useProfile, type Address } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus, type Address } from '../../context/ProfileContext';
 import { Badge, Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { colors, radii, spacing, typography } from '../../theme';
@@ -11,6 +11,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileAddresses'>;
 
 export function ProfileAddressesScreen({ navigation }: Props) {
   const { addresses } = useProfile();
+  useProfileRefreshOnFocus();
 
   function handleAddAddress() {
     navigation.navigate('ProfileAddAddress');
@@ -20,6 +21,7 @@ export function ProfileAddressesScreen({ navigation }: Props) {
     <ScreenContainer scrollable={false}>
       <NavHeader title="Addresses" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {addresses.length === 0 ? <Text style={styles.cardLine}>No saved addresses yet.</Text> : null}
         {addresses.map(address => (
           <AddressCard
             key={address.id}
@@ -37,12 +39,6 @@ export function ProfileAddressesScreen({ navigation }: Props) {
           />
         </View>
 
-        <View style={styles.bannerWrapper}>
-          <View style={styles.banner}>
-            <Icon name="info" size={14} color={colors.primaryDark} />
-            <Text style={styles.bannerText}>Store address determines your delivery zone.</Text>
-          </View>
-        </View>
       </ScrollView>
     </ScreenContainer>
   );
@@ -60,7 +56,7 @@ function AddressCard({ address, onEdit }: { address: Address; onEdit: () => void
       </View>
       <View style={styles.cardBody}>
         <Text style={styles.cardLine}>{address.line1}</Text>
-        <Text style={styles.cardLine}>{address.line2}</Text>
+        {address.line2 ? <Text style={styles.cardLine}>{address.line2}</Text> : null}
         <Pressable style={styles.editButton} onPress={onEdit} hitSlop={8}>
           <Text style={styles.editButtonText}>Edit</Text>
         </Pressable>
@@ -127,21 +123,5 @@ const styles = StyleSheet.create({
   },
   addButtonWrapper: {
     width: '100%',
-  },
-  bannerWrapper: {
-    width: '100%',
-  },
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    backgroundColor: colors.primarySurface,
-    borderRadius: radii.sm + 2,
-    padding: spacing.lg,
-  },
-  bannerText: {
-    ...typography.caption,
-    color: colors.primaryDark,
-    flex: 1,
   },
 });

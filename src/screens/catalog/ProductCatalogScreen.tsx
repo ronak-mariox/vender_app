@@ -1,37 +1,60 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { ProductListRow } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useProductCatalog, ProductStatus } from '../../context/ProductCatalogContext';
+import {
+  applyCatalogFilters,
+  CATALOG_SORT_LABELS,
+  DEFAULT_CATALOG_FILTERS,
+  ProductStatus,
+  useProductCatalog,
+} from '../../context/ProductCatalogContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductCatalog'>;
 
-type TabKey = 'all' | 'active' | 'inactive' | 'draft' | 'pending';
+type TabKey = 'all' | 'active' | 'inactive' | 'pending' | 'rejected';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'active', label: 'Active' },
   { key: 'inactive', label: 'Inactive' },
-  { key: 'draft', label: 'Draft' },
   { key: 'pending', label: 'Pending' },
+  { key: 'rejected', label: 'Rejected' },
 ];
+
+function isLive(status: ProductStatus) {
+  return status === 'active' || status === 'low-stock' || status === 'out-of-stock';
+}
 
 function matchesTab(status: ProductStatus, tab: TabKey) {
   if (tab === 'all') return true;
-  if (tab === 'active') return status === 'active' || status === 'low-stock';
+  if (tab === 'active') return isLive(status);
   return status === tab;
 }
 
 export function ProductCatalogScreen({ navigation }: Props) {
-  const { products } = useProductCatalog();
+  const { products, loading, error, refreshProducts, catalogFilters } = useProductCatalog();
   const [tab, setTab] = useState<TabKey>('all');
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshProducts();
+    } catch (err) {
+      Alert.alert('Could not refresh', getApiErrorMessage(err));
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const counts = useMemo(() => {
-    const result: Record<TabKey, number> = { all: 0, active: 0, inactive: 0, draft: 0, pending: 0 };
+    const result: Record<TabKey, number> = { all: 0, active: 0, inactive: 0, pending: 0, rejected: 0 };
     products.forEach(product => {
       TABS.forEach(({ key }) => {
         if (matchesTab(product.status, key)) result[key] += 1;
@@ -41,14 +64,18 @@ export function ProductCatalogScreen({ navigation }: Props) {
   }, [products]);
 
   const filtered = useMemo(
-    () => products.filter(product => matchesTab(product.status, tab)),
-    [products, tab],
+    () => applyCatalogFilters(products, catalogFilters).filter(product => matchesTab(product.status, tab)),
+    [products, catalogFilters, tab],
   );
 
-  const activeCount = products.filter(p => p.status === 'active' || p.status === 'low-stock').length;
+  const activeCount = products.filter(p => isLive(p.status)).length;
+  const filtersActive =
+    catalogFilters.statuses.length > 0 ||
+    catalogFilters.categoryIds.length > 0 ||
+    catalogFilters.sort !== DEFAULT_CATALOG_FILTERS.sort;
 
   function handleMorePress(id: string, name: string, status: ProductStatus) {
-    const isActive = status === 'active' || status === 'low-stock';
+    const isActive = isLive(status);
     Alert.alert(name, 'Choose an action', [
       {
         text: isActive ? 'Deactivate' : 'Activate',
@@ -111,7 +138,10 @@ export function ProductCatalogScreen({ navigation }: Props) {
         <Text style={styles.resultsText}>Showing {filtered.length} products</Text>
         <Pressable style={styles.sortButton} onPress={() => navigation.navigate('ProductFilters')}>
           <Icon name="sort" size={13} color={colors.primary} />
-          <Text style={styles.sortText}>Newest First</Text>
+          <Text style={styles.sortText}>
+            {CATALOG_SORT_LABELS[catalogFilters.sort]}
+            {filtersActive ? ' · Filtered' : ''}
+          </Text>
         </Pressable>
       </View>
 
@@ -119,6 +149,7 @@ export function ProductCatalogScreen({ navigation }: Props) {
         data={filtered}
         keyExtractor={item => item.id}
         style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         renderItem={({ item }) => (
           <ProductListRow
             product={item}
@@ -127,10 +158,26 @@ export function ProductCatalogScreen({ navigation }: Props) {
           />
         )}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Icon name="package" size={32} color={colors.textTertiary} />
-            <Text style={styles.emptyText}>No products in this filter yet</Text>
-          </View>
+          loading && products.length === 0 ? (
+            <View style={styles.emptyState}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : error && products.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Icon name="alert-circle" size={32} color={colors.error} />
+              <Text style={styles.emptyText}>{error}</Text>
+              <Pressable onPress={handleRefresh} hitSlop={8}>
+                <Text style={styles.sortText}>Try again</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Icon name="package" size={32} color={colors.textTertiary} />
+              <Text style={styles.emptyText}>
+                {products.length === 0 ? 'No products yet. Tap + to add your first product.' : 'No products match this filter'}
+              </Text>
+            </View>
+          )
         }
       />
     </SafeAreaView>

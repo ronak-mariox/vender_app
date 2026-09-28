@@ -3,29 +3,32 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, NavHeader, ScreenContainer } from '../../components';
-import { Icon } from '../../icons/Icon';
 import { NotificationHero } from './NotificationHero';
-import { DetailCard } from './DetailCard';
+import { DetailCard, DetailRow } from './DetailCard';
 import { useNotifications } from '../../context/NotificationsContext';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { useVendorAuth } from '../../context/VendorAuthContext';
+import { getNotificationMeta } from './notificationMeta';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'KYCStatusNotification'>;
 
-// KYC-approved teal accent used by this notification's success state — not
-// part of the shared theme token set (see report for the gap), kept local.
-const KYC_ACCENT = '#0891B2';
 const KYC_ACCENT_DARK = '#0E7490';
 const KYC_SURFACE = '#ECFEFF';
 const KYC_BORDER = '#A5F3FC';
 
-const VERIFIED_DOCUMENTS = ['PAN Card', 'Aadhaar Card', 'GST Certificate', 'Bank Details'];
+const ACCOUNT_STATUS_LABEL: Record<string, string> = {
+  pending: 'Under review',
+  active: 'Active',
+  suspended: 'Suspended',
+  rejected: 'Rejected',
+};
 
 export function KYCStatusNotificationScreen({ navigation, route }: Props) {
   const { notificationId } = route.params;
   const { getNotification } = useNotifications();
+  const { vendor } = useVendorAuth();
   const notification = getNotification(notificationId);
-  const meta = NOTIFICATION_CATEGORY_META['kyc-status'];
+  const meta = getNotificationMeta('kyc-status');
 
   if (!notification) {
     return (
@@ -38,57 +41,55 @@ export function KYCStatusNotificationScreen({ navigation, route }: Props) {
     );
   }
 
-  const combinedText = `${notification.title} ${notification.subtitle}`;
-  const isApproved = /approv|verified/i.test(combinedText) && !/reject/i.test(combinedText);
-  const isRejected = /reject/i.test(combinedText);
+  // The notification itself carries no status field, so show the account's current real status.
+  const status = vendor?.status ?? '';
+  const isApproved = status === 'active';
+  const isRejected = status === 'rejected';
+  const isSuspended = status === 'suspended';
 
   return (
     <ScreenContainer backgroundColor={colors.white} scrollable>
       <NavHeader title="KYC Status Update" onBack={() => navigation.goBack()} />
       <NotificationHero
         icon={meta.icon}
-        iconColor={isRejected ? '#D92D20' : meta.iconColor}
-        iconBg={isRejected ? '#FEF3F2' : meta.iconBg}
+        iconColor={isRejected || isSuspended ? '#D92D20' : meta.iconColor}
+        iconBg={isRejected || isSuspended ? '#FEF3F2' : meta.iconBg}
         title={notification.title}
         subtitle={notification.subtitle}
         timeLabel={notification.timeLabel}
       />
       <View style={styles.content}>
-        {isApproved ? (
-          <>
-            <DetailCard title="Verified Documents">
-              {VERIFIED_DOCUMENTS.map((doc, index) => (
-                <View key={doc} style={[styles.docRow, index > 0 && styles.docRowSpacing]}>
-                  <View style={styles.docIcon}>
-                    <Icon name="check" size={12} color={KYC_ACCENT} />
-                  </View>
-                  <Text style={styles.docLabel}>{doc}</Text>
-                  <Text style={styles.docStatus}>Verified</Text>
-                </View>
-              ))}
-            </DetailCard>
+        {status ? (
+          <DetailCard>
+            <DetailRow label="Current account status" value={ACCOUNT_STATUS_LABEL[status] ?? status} bold />
+          </DetailCard>
+        ) : null}
 
-            <View style={styles.banner}>
-              <Text style={styles.bannerText}>
-                Your account is now fully active. You can start receiving orders.
-              </Text>
-            </View>
-          </>
+        {isApproved ? (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>Your account is active. You can receive orders.</Text>
+          </View>
         ) : null}
 
         <View style={styles.footerRow}>
           <View style={styles.footerButton}>
             <Button
-              label={isApproved ? 'Start Selling' : 'Got it'}
-              onPress={() => (isApproved ? navigation.navigate('Dashboard') : navigation.goBack())}
+              label={isApproved ? 'Go to Dashboard' : isSuspended ? 'Contact Support' : 'Got it'}
+              onPress={() => {
+                if (isApproved) navigation.navigate('Dashboard');
+                else if (isSuspended) navigation.navigate('HelpSupport');
+                else navigation.goBack();
+              }}
             />
           </View>
-          {isApproved || isRejected ? (
+          {isRejected ? (
             <View style={styles.footerButton}>
               <Button
-                label="View KYC Details"
+                label="View Details"
                 variant="outline"
-                onPress={() => navigation.navigate(isRejected ? 'KYCRejected' : 'KYCApproved')}
+                onPress={() =>
+                  navigation.navigate('KYCRejected', { rejectionReason: vendor?.rejectionReason ?? undefined })
+                }
               />
             </View>
           ) : null}
@@ -103,31 +104,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.xl,
     gap: spacing.lg,
-  },
-  docRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
-  },
-  docRowSpacing: {
-    paddingTop: spacing.md + spacing.xxs,
-  },
-  docIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: radii.sm,
-    backgroundColor: KYC_SURFACE,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  docLabel: {
-    ...typography.label,
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  docStatus: {
-    ...typography.captionSemibold,
-    color: KYC_ACCENT,
   },
   banner: {
     backgroundColor: KYC_SURFACE,

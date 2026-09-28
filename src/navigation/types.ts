@@ -1,7 +1,7 @@
 export type AuthStackParamList = {
   Splash: undefined;
   Welcome: undefined;
-  Login: undefined;
+  Login: { message?: string } | undefined;
   MobileNumber: { intent: 'login' | 'create-account' };
   OtpVerification: { mobileNumber: string; intent: 'login' | 'create-account' };
   AccountNotFound: { mobileNumber: string };
@@ -24,7 +24,6 @@ export type AuthStackParamList = {
   KYCPending: undefined;
   KYCApproved: undefined;
   KYCRejected: { rejectionReason?: string } | undefined;
-  RegistrationComplete: undefined;
 
   StoreSetupIntro: undefined;
   StoreProfile: undefined;
@@ -54,7 +53,6 @@ export type AuthStackParamList = {
 
   AddProduct: undefined;
   ProductBasicInfo: undefined;
-  BrandPicker: undefined;
   ProductImages: undefined;
   ProductCategoryStep: undefined;
   ProductSubcategoryStep: { categoryId: string };
@@ -65,9 +63,7 @@ export type AuthStackParamList = {
   ProductDiscount: undefined;
   ProductTaxInfo: undefined;
   ProductSKU: undefined;
-  ProductBarcode: undefined;
   ProductStockQuantity: undefined;
-  ProductAvailability: undefined;
   ReviewProduct: undefined;
   PublishProduct: undefined;
   PublishSuccess: undefined;
@@ -100,44 +96,17 @@ export type AuthStackParamList = {
   OrdersList: undefined;
   NewOrders: undefined;
   PreparingOrders: undefined;
-  QualityCheckOrders: undefined;
-  PackingOrders: undefined;
   ReadyForDispatchOrders: undefined;
   DispatchedOrders: undefined;
   CompletedOrders: undefined;
   CancelledOrders: undefined;
-  FailedOrders: undefined;
   OrderDetails: { orderId: string };
 
   NewOrderReceived: { orderId: string };
-  AcceptOrderConfirm: { orderId: string };
-  RejectOrderWarning: { orderId: string };
   RejectReason: { orderId: string };
   RejectOrderConfirmation: { orderId: string; reasonLabel: string };
-  InventoryCheck: { orderId: string };
   ProductPicking: { orderId: string };
-  ItemAvailability: { orderId: string };
-  MissingItemDecision: { orderId: string; itemName: string; itemPrice: number; itemQty: number };
-  ReplaceItem: { orderId: string; itemName: string; itemPrice: number; itemQty: number; source: 'missing' | 'qc' };
-  RemoveItem: { orderId: string; itemName: string; itemPrice: number; itemQty: number; source: 'missing' | 'qc' };
-  OrderUpdated: {
-    orderId: string;
-    resolution: 'replaced' | 'removed';
-    itemName: string;
-    itemPrice: number;
-    source: 'missing' | 'qc';
-  };
-  QualityCheckFlow: { orderId: string };
-  QCFailedDecision: { orderId: string; itemName: string; itemPrice: number; itemQty: number };
-  QCPassed: { orderId: string };
-  PackingStart: { orderId: string };
-  PackingInProgress: { orderId: string };
-  PackingComplete: { orderId: string };
   ReadyForDispatchConfirm: { orderId: string };
-  DispatchQueue: { orderId: string };
-  PartnerAssigned: { orderId: string };
-  HandoverChecklist: { orderId: string };
-  HandoverConfirmation: { orderId: string };
   OrderDispatched: { orderId: string };
   OrderDelivered: { orderId: string };
 
@@ -145,10 +114,12 @@ export type AuthStackParamList = {
   VendorCancelOrder: { orderId: string };
   CancellationReason: { orderId: string };
   CancellationConfirmation: { orderId: string; reasonLabel: string };
-  FailedOrderDetails: { orderId: string };
-  OrderActionError: { orderId: string; actionLabel: string };
-  RetryingAction: { orderId: string; actionLabel: string };
-  ActionRecovered: { orderId: string; actionLabel: string };
+  OrderActionError: {
+    orderId: string;
+    action: 'accept' | 'reject' | 'preparing' | 'ready' | 'cancel';
+    note?: string;
+    message?: string;
+  };
 
   PricingOverview: undefined;
   CategoryPricingList: { categoryId?: string; categoryName?: string };
@@ -158,23 +129,7 @@ export type AuthStackParamList = {
   SellingPriceEditor: { productId: string };
   DiscountEditor: { productId: string };
   TaxEditor: { productId: string };
-  PriceReview: {
-    productId: string;
-    pendingMrp?: number;
-    pendingSellingPrice?: number;
-    changes: { field: string; from: string; to: string }[];
-  };
   PriceUpdated: { productId: string; headline: string; message: string };
-  PriceUpdateError: {
-    productId: string;
-    pendingMrp?: number;
-    pendingSellingPrice?: number;
-    changes: { field: string; from: string; to: string }[];
-    headline: string;
-    message: string;
-    errorCode: string;
-    errorField: string;
-  };
 
   OffersOverview: undefined;
   ActiveOffers: undefined;
@@ -197,30 +152,19 @@ export type AuthStackParamList = {
   TotalSales: undefined;
   PendingSettlement: undefined;
   PaidSettlement: undefined;
-  Deductions: undefined;
   SettlementDetails: { settlementId: string };
-  Commission: undefined;
-  Taxes: undefined;
-  Adjustments: undefined;
-  NetSettlement: { settlementId: string };
+  NetSettlement: undefined;
   SettlementHistory: undefined;
-  TransactionDetails: { settlementId: string };
-  Invoice: { settlementId: string };
   ViewInvoice: { settlementId: string };
-  DownloadInvoice: { settlementId: string };
-  PaymentError: { settlementId: string };
-  SettlementIssue: { settlementId: string };
 
   AnalyticsOverview: undefined;
   SalesAnalytics: undefined;
   OrdersAnalytics: undefined;
-  RevenueAnalytics: undefined;
   AverageOrderValue: undefined;
   BestSellingProducts: undefined;
   LowPerformingProducts: undefined;
   CancellationAnalytics: undefined;
   InventoryPerformance: undefined;
-  SettlementSummary: undefined;
 
   Notifications: undefined;
   NewOrderNotification: { notificationId: string };
@@ -228,42 +172,13 @@ export type AuthStackParamList = {
   LowStockNotification: { notificationId: string };
   OutOfStockNotification: { notificationId: string };
   PaymentNotification: { notificationId: string };
-  SettlementNotification: { notificationId: string };
   ProductApprovalNotification: { notificationId: string };
   KYCStatusNotification: { notificationId: string };
-  StoreStatusNotification: { notificationId: string };
-  SystemAlertNotification: { notificationId: string };
-  AnnouncementNotification: { notificationId: string };
   NotificationDetail: { notificationId: string };
   ClearNotifications: undefined;
 
   HelpSupport: undefined;
-  SupportCategories: undefined;
-  SelectIssue: { categoryId: string };
-  IssueDetails: { categoryId: string; issueId: string };
-  UploadEvidence: undefined;
-  PreviewEvidence: undefined;
-  SubmitTicket: undefined;
-  TicketCreated: { ticketId: string };
-  TicketDetails: { ticketId: string };
-  TicketStatus: undefined;
-  SupportResponse: { ticketId: string };
-  TicketResolved: { ticketId: string };
-  ReopenTicket: { ticketId: string };
-  EscalateTicket: { ticketId: string };
-  TicketClosed: { ticketId: string };
 
-  DisputeCustomerIssue: { disputeId: string };
-  DisputeIssueDetails: { disputeId: string };
-  DisputeVendorReview: { disputeId: string };
-  DisputeAcceptIssue: { disputeId: string };
-  DisputeIssueDispute: { disputeId: string };
-  DisputeUploadEvidence: { disputeId: string };
-  DisputeSubmit: { disputeId: string };
-  DisputeSupportReview: { disputeId: string };
-  DisputeDecision: { disputeId: string };
-  DisputeSettlementAdjustment: { disputeId: string };
-  DisputeResolved: { disputeId: string };
 
   Profile: undefined;
   ProfileVendorInfo: undefined;
@@ -284,14 +199,7 @@ export type AuthStackParamList = {
   ProfileNotificationSettings: undefined;
   ProfileSecurity: undefined;
 
-  SecurityChangeMobileNumber: undefined;
-  SecurityChangeMobileOtp: { newMobileNumber: string };
-  SecurityChangePin: undefined;
-  SecurityActiveSessions: undefined;
-  SecurityLoginHistory: undefined;
   SecurityLogout: undefined;
-  SecurityLogoutConfirmation: undefined;
-  SecurityDeleteAccountConfirm: undefined;
 
   PolicyTerms: undefined;
   PolicyPrivacy: undefined;

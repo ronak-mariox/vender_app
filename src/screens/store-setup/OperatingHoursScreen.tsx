@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Switch, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -6,28 +6,40 @@ import { Button, NavHeader, ProgressSteps, ScreenContainer, SelectField } from '
 import { Icon } from '../../icons/Icon';
 import { useStoreSetup, type DaySchedule, type OperatingHoursData } from '../../context/StoreSetupContext';
 import { TIME_OPTIONS } from '../../utils/time';
-import { api, getApiErrorMessage } from '../../services/api';
-import { isTimeRangeValid, type FormErrors } from '../../utils/validators';
+import { api } from '../../services/api';
+import { type FormErrors } from '../../utils/validators';
+import { handleFormSaveError } from '../registration/registrationHelpers';
+import { isCloseAfterOpen } from './storeSetupHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OperatingHours'>;
 
-type Errors = FormErrors<'hours'>;
+const FIELDS = ['hours', 'weeklySchedule'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function buildWeeklySchedule(open: string, close: string): DaySchedule[] {
-  return DAYS.map(day => ({ day, open, close, isOpen: day !== 'Sun' }));
+  return DAYS.map(day => ({ day, open, close, isOpen: true }));
 }
 
 export function OperatingHoursScreen({ navigation }: Props) {
   const { data, updateOperatingHours } = useStoreSetup();
   const [sameEveryDay, setSameEveryDay] = useState(data.operatingHours?.sameEveryDay ?? true);
-  const [defaultOpen, setDefaultOpen] = useState(data.operatingHours?.defaultOpen ?? '9:00 AM');
-  const [defaultClose, setDefaultClose] = useState(data.operatingHours?.defaultClose ?? '9:00 PM');
+  const [defaultOpen, setDefaultOpen] = useState(data.operatingHours?.defaultOpen ?? '');
+  const [defaultClose, setDefaultClose] = useState(data.operatingHours?.defaultClose ?? '');
   const [breakEnabled, setBreakEnabled] = useState(data.operatingHours?.breakEnabled ?? false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
+
+  useEffect(() => {
+    const hours = data.operatingHours;
+    if (!hours) return;
+    setSameEveryDay(hours.sameEveryDay);
+    setDefaultOpen(hours.defaultOpen);
+    setDefaultClose(hours.defaultClose);
+    setBreakEnabled(hours.breakEnabled);
+  }, [data.operatingHours]);
 
   function currentValue(): OperatingHoursData {
     return {
@@ -35,12 +47,19 @@ export function OperatingHoursScreen({ navigation }: Props) {
       defaultOpen,
       defaultClose,
       breakEnabled,
-      weeklySchedule: data.operatingHours?.weeklySchedule ?? buildWeeklySchedule(defaultOpen, defaultClose),
+      weeklySchedule:
+        !sameEveryDay && data.operatingHours?.weeklySchedule?.length === 7
+          ? data.operatingHours.weeklySchedule
+          : buildWeeklySchedule(defaultOpen, defaultClose),
     };
   }
 
   function validateHours(): boolean {
-    if (!isTimeRangeValid(defaultOpen, defaultClose)) {
+    if (!defaultOpen || !defaultClose) {
+      setErrors({ hours: 'Select your opening and closing time' });
+      return false;
+    }
+    if (!isCloseAfterOpen(defaultOpen, defaultClose)) {
       setErrors({ hours: 'Closing time must be after opening time' });
       return false;
     }
@@ -70,7 +89,7 @@ export function OperatingHoursScreen({ navigation }: Props) {
       updateOperatingHours(value);
       navigation.navigate('HolidayClosure');
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save your operating hours. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }

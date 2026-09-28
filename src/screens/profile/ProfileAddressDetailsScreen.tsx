@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { useProfile } from '../../context/ProfileContext';
-import { Badge, Button, Input, NavHeader, ScreenContainer } from '../../components';
+import { Button, Input, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { isRequired, type FormErrors } from '../../utils/validators';
+import { getApiErrorMessage, getFieldErrors } from '../../services/api';
 import { colors, spacing, typography } from '../../theme';
 
 type Errors = FormErrors<'label' | 'line1' | 'line2' | 'lat' | 'lng'>;
@@ -14,7 +15,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileAddressDetails'>
 
 export function ProfileAddressDetailsScreen({ navigation, route }: Props) {
   const { addressId } = route.params;
-  const { getAddress, updateAddress } = useProfile();
+  const { getAddress, updateAddress, removeAddress, setPrimaryAddress } = useProfile();
   const address = getAddress(addressId);
 
   if (!address) {
@@ -29,9 +30,33 @@ export function ProfileAddressDetailsScreen({ navigation, route }: Props) {
     );
   }
 
+  function handleDelete() {
+    Alert.alert('Delete address?', address!.label, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          removeAddress(addressId)
+            .then(() => navigation.goBack())
+            .catch(err => Alert.alert('Could not delete address', getApiErrorMessage(err, 'Please try again.')));
+        },
+      },
+    ]);
+  }
+
+  function handleSetPrimary() {
+    setPrimaryAddress(addressId).catch(err =>
+      Alert.alert('Could not set primary address', getApiErrorMessage(err, 'Please try again.')),
+    );
+  }
+
   return (
     <AddressDetailsForm
       addressId={addressId}
+      isPrimary={address.isPrimary}
+      onDelete={handleDelete}
+      onSetPrimary={handleSetPrimary}
       initialLabel={address.label}
       initialLine1={address.line1}
       initialLine2={address.line2}
@@ -47,6 +72,9 @@ export function ProfileAddressDetailsScreen({ navigation, route }: Props) {
 }
 
 function AddressDetailsForm({
+  isPrimary,
+  onDelete,
+  onSetPrimary,
   initialLabel,
   initialLine1,
   initialLine2,
@@ -56,12 +84,15 @@ function AddressDetailsForm({
   onBack,
 }: {
   addressId: string;
+  isPrimary: boolean;
+  onDelete: () => void;
+  onSetPrimary: () => void;
   initialLabel: string;
   initialLine1: string;
   initialLine2: string;
   initialLat: number | null;
   initialLng: number | null;
-  onSave: (value: { label: string; line1: string; line2: string; lat: number | null; lng: number | null }) => void | Promise<void>;
+  onSave: (value: { label: string; line1: string; line2: string; lat?: number; lng?: number }) => void | Promise<void>;
   onBack: () => void;
 }) {
   const [label, setLabel] = useState(initialLabel);
@@ -71,8 +102,6 @@ function AddressDetailsForm({
   const [lng, setLng] = useState(initialLng != null ? String(initialLng) : '');
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
-
-  const isVerified = isRequired(lat) && isRequired(lng);
 
   async function handleSave() {
     if (saving) return;
@@ -88,14 +117,14 @@ function AddressDetailsForm({
     setSaving(true);
     try {
       await onSave({
-        label,
-        line1,
-        line2,
-        lat: lat.trim() ? Number(lat) : null,
-        lng: lng.trim() ? Number(lng) : null,
+        label: label.trim(),
+        line1: line1.trim(),
+        line2: line2.trim(),
+        ...(lat.trim() && { lat: Number(lat) }),
+        ...(lng.trim() && { lng: Number(lng) }),
       });
-    } catch {
-      setErrors({ form: 'Could not save address. Please check your connection and try again.' });
+    } catch (err) {
+      setErrors({ ...getFieldErrors(err), form: getApiErrorMessage(err, 'Could not save address.') });
     } finally {
       setSaving(false);
     }
@@ -144,11 +173,6 @@ function AddressDetailsForm({
         <View style={styles.mapCard}>
           <View style={styles.mapPreview}>
             <Icon name="pin" size={40} color={colors.primary} />
-            {isVerified ? (
-              <View style={styles.badgeWrapper}>
-                <Badge label="Verified on Map" tone="success" />
-              </View>
-            ) : null}
           </View>
           <View style={styles.mapFields}>
             <Input
@@ -180,6 +204,8 @@ function AddressDetailsForm({
 
         <View style={styles.buttonGroup}>
           <Button label="Save Address" onPress={handleSave} loading={saving} />
+          {!isPrimary ? <Button label="Set as Primary" variant="outline" onPress={onSetPrimary} /> : null}
+          <Button label="Delete Address" variant="text" onPress={onDelete} />
         </View>
       </ScrollView>
     </ScreenContainer>
@@ -206,11 +232,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  badgeWrapper: {
-    position: 'absolute',
-    top: spacing.lg,
-    right: spacing.lg,
   },
   mapFields: {
     padding: spacing.xl,

@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
-import { useOrders } from '../../context/OrdersContext';
-import { getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { useOrderAction } from '../orders/orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'RejectReason'>;
 
@@ -22,27 +21,17 @@ const REASONS = [
 
 export function RejectReasonScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const { rejectOrder } = useOrders();
+  const { perform, busy: submitting } = useOrderAction(navigation);
   const [selected, setSelected] = useState(REASONS[0].label);
   const [note, setNote] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const needsNote = selected === 'Other';
+  const trimmedNote = note.trim();
+  const canSubmit = !submitting && (!needsNote || trimmedNote.length > 0);
 
-  async function handleConfirm() {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      await rejectOrder(orderId, selected);
-      // Reset (not replace) so "New Order Received" / "Reject Order" screens are purged from the
-      // stack — otherwise back navigation could walk back into them for an already-rejected order.
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Dashboard' }, { name: 'RejectOrderConfirmation', params: { orderId, reasonLabel: selected } }],
-      });
-    } catch (err) {
-      Alert.alert('Could not reject order', getApiErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+  function handleConfirm() {
+    if (!canSubmit) return;
+    const reason = needsNote ? trimmedNote : trimmedNote ? `${selected}: ${trimmedNote}` : selected;
+    perform('reject', orderId, reason);
   }
 
   return (
@@ -83,7 +72,7 @@ export function RejectReasonScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.noteCard}>
-          <Text style={styles.noteLabel}>Additional note (optional)</Text>
+          <Text style={styles.noteLabel}>{needsNote ? 'Describe your reason' : 'Additional note (optional)'}</Text>
           <TextInput
             style={styles.noteInput}
             placeholder="Explain in your own words..."
@@ -97,9 +86,9 @@ export function RejectReasonScreen({ navigation, route }: Props) {
 
       <View style={styles.footer}>
         <Pressable
-          style={[styles.confirmButton, submitting && styles.confirmButtonDisabled]}
+          style={[styles.confirmButton, !canSubmit && styles.confirmButtonDisabled]}
           onPress={handleConfirm}
-          disabled={submitting}
+          disabled={!canSubmit}
         >
           <Text style={styles.confirmButtonText}>{submitting ? 'Rejecting…' : 'Confirm Rejection'}</Text>
         </Pressable>

@@ -1,51 +1,50 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, Checkbox, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { CATEGORIES } from '../../data/categories';
-import { useProductCatalog } from '../../context/ProductCatalogContext';
+import {
+  CATALOG_SORT_LABELS,
+  CatalogSort,
+  DEFAULT_CATALOG_FILTERS,
+  ProductStatus,
+  useProductCatalog,
+} from '../../context/ProductCatalogContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductFilters'>;
 
-const SORT_OPTIONS = ['Newest First', 'Oldest First', 'Name A–Z', 'Price: Low to High', 'Price: High to Low', 'Stock: Low to High'];
+const SORT_OPTIONS = Object.keys(CATALOG_SORT_LABELS) as CatalogSort[];
 
-const STATUS_OPTIONS = [
-  'Active',
-  'Inactive',
-  'Draft',
-  'Pending',
-  'Approved',
-  'Rejected',
-  'Out of Stock',
-  'Low Stock',
-  'Uploading',
-  'Error',
+const STATUS_OPTIONS: { value: ProductStatus; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'low-stock', label: 'Low Stock' },
+  { value: 'out-of-stock', label: 'Out of Stock' },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'rejected', label: 'Rejected' },
 ];
 
 export function ProductFiltersScreen({ navigation }: Props) {
-  const { products } = useProductCatalog();
-  const [sort, setSort] = useState(SORT_OPTIONS[0]);
-  const [statuses, setStatuses] = useState<string[]>(['Active']);
-  const [categoryIds, setCategoryIds] = useState<string[]>(
-    CATEGORIES.slice(0, 2).map(category => category.id),
-  );
+  const { products, categories, catalogFilters, setCatalogFilters } = useProductCatalog();
+  const [sort, setSort] = useState<CatalogSort>(catalogFilters.sort);
+  const [statuses, setStatuses] = useState<ProductStatus[]>(catalogFilters.statuses);
+  const [categoryIds, setCategoryIds] = useState<string[]>(catalogFilters.categoryIds);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    CATEGORIES.forEach(category => {
-      counts[category.id] = products.filter(p => p.categoryId === category.id).length;
+    products.forEach(product => {
+      counts[product.categoryId] = (counts[product.categoryId] ?? 0) + 1;
     });
     return counts;
   }, [products]);
 
   const activeFilterCount =
-    statuses.length + categoryIds.length + (sort !== SORT_OPTIONS[0] ? 1 : 0);
+    statuses.length + categoryIds.length + (sort !== DEFAULT_CATALOG_FILTERS.sort ? 1 : 0);
 
-  function toggleStatus(value: string) {
+  function toggleStatus(value: ProductStatus) {
     setStatuses(prev => (prev.includes(value) ? prev.filter(v => v !== value) : [...prev, value]));
   }
 
@@ -54,9 +53,14 @@ export function ProductFiltersScreen({ navigation }: Props) {
   }
 
   function handleReset() {
-    setSort(SORT_OPTIONS[0]);
+    setSort(DEFAULT_CATALOG_FILTERS.sort);
     setStatuses([]);
     setCategoryIds([]);
+  }
+
+  function handleApply() {
+    setCatalogFilters({ sort, statuses, categoryIds });
+    navigation.goBack();
   }
 
   return (
@@ -68,7 +72,7 @@ export function ProductFiltersScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Sort By</Text>
           <View style={styles.optionList}>
@@ -80,7 +84,7 @@ export function ProductFiltersScreen({ navigation }: Props) {
                   onPress={() => setSort(option)}
                   style={[styles.sortRow, active && styles.sortRowActive]}
                 >
-                  <Text style={[styles.sortLabel, active && styles.sortLabelActive]}>{option}</Text>
+                  <Text style={[styles.sortLabel, active && styles.sortLabelActive]}>{CATALOG_SORT_LABELS[option]}</Text>
                   {active ? (
                     <View style={styles.checkBubble}>
                       <Icon name="check" size={11} color={colors.white} strokeWidth={3} />
@@ -96,14 +100,14 @@ export function ProductFiltersScreen({ navigation }: Props) {
           <Text style={styles.cardTitle}>Product Status</Text>
           <View style={styles.chipWrap}>
             {STATUS_OPTIONS.map(option => {
-              const active = statuses.includes(option);
+              const active = statuses.includes(option.value);
               return (
                 <Pressable
-                  key={option}
-                  onPress={() => toggleStatus(option)}
+                  key={option.value}
+                  onPress={() => toggleStatus(option.value)}
                   style={[styles.chip, active && styles.chipActive]}
                 >
-                  <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option}</Text>
+                  <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option.label}</Text>
                 </Pressable>
               );
             })}
@@ -112,7 +116,8 @@ export function ProductFiltersScreen({ navigation }: Props) {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Category</Text>
-          {CATEGORIES.map(category => (
+          {categories.length === 0 ? <Text style={styles.categoryCount}>No categories available</Text> : null}
+          {categories.map(category => (
             <Pressable
               key={category.id}
               style={styles.categoryRow}
@@ -124,12 +129,12 @@ export function ProductFiltersScreen({ navigation }: Props) {
             </Pressable>
           ))}
         </View>
-      </View>
+      </ScrollView>
 
       <View style={styles.footer}>
         <Button
           label={`Apply Filters${activeFilterCount > 0 ? ` (${activeFilterCount} active)` : ''}`}
-          onPress={() => navigation.goBack()}
+          onPress={handleApply}
         />
       </View>
     </SafeAreaView>
@@ -156,10 +161,13 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.medium,
     color: colors.error,
   },
-  content: {
+  scroll: {
     flex: 1,
+  },
+  content: {
     paddingHorizontal: spacing.xxl,
     paddingTop: spacing.xl,
+    paddingBottom: spacing.xl,
     gap: spacing.xl,
   },
   card: {

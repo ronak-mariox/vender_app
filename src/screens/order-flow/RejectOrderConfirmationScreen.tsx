@@ -6,6 +6,7 @@ import { useOrders } from '../../context/OrdersContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { FlowStatusScreen } from './FlowStatusScreen';
 import { FlexButton } from './FlexButton';
+import { statusEventTime } from '../orders/orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'RejectOrderConfirmation'>;
 
@@ -15,7 +16,7 @@ export function RejectOrderConfirmationScreen({ navigation, route }: Props) {
   const order = getOrder(orderId);
   if (!order) return null;
 
-  const rejectedAt = order.statusHistory[order.statusHistory.length - 1]?.time ?? '';
+  const rejectedAt = statusEventTime(order, 'rejected');
 
   return (
     <FlowStatusScreen
@@ -24,19 +25,22 @@ export function RejectOrderConfirmationScreen({ navigation, route }: Props) {
       iconBg="#F3F4F6"
       iconRingColor={colors.border}
       heading="Order Rejected"
-      subtitle={`${order.id} has been rejected. ${order.customerName} has been notified and will receive a full refund.`}
+      subtitle={`${order.orderNumber} has been rejected and the customer will be notified.`}
       footer={
         <>
           <FlexButton
             label="View All Orders"
-            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'OrdersList' }] })}
+            onPress={() => {
+              navigation.popToTop();
+              navigation.navigate('OrdersList');
+            }}
             background={colors.primary}
             textColor={colors.white}
             flex={1}
           />
           <FlexButton
             label="Back to Dashboard"
-            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] })}
+            onPress={() => navigation.popToTop()}
             background={colors.white}
             textColor={colors.textSecondary}
             borderColor={colors.border}
@@ -48,19 +52,15 @@ export function RejectOrderConfirmationScreen({ navigation, route }: Props) {
       <View style={styles.summaryCard}>
         <View style={styles.row}>
           <Text style={styles.label}>Order</Text>
-          <Text style={styles.value}>ORD-2026-{order.id.replace('ORD-', '')}</Text>
+          <Text style={styles.value}>{order.orderNumber}</Text>
         </View>
         <View style={styles.row}>
           <Text style={styles.label}>Reason</Text>
           <Text style={styles.value}>{reasonLabel}</Text>
         </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Refund</Text>
-          <Text style={styles.value}>₹{order.amount} → UPI in 2-3 days</Text>
-        </View>
         <View style={[styles.row, styles.rowLast]}>
           <Text style={styles.label}>Rejected at</Text>
-          <Text style={styles.value}>{rejectedAt}, 06 Sep</Text>
+          <Text style={styles.value}>{rejectedAt || '—'}</Text>
         </View>
       </View>
     </FlowStatusScreen>

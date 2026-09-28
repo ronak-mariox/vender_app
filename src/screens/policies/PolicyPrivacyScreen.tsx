@@ -1,62 +1,31 @@
-import React, { useCallback, useState } from 'react';
-import { Alert, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text } from 'react-native';
+import React from 'react';
+import { ScrollView, StyleSheet, Text } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ScreenContainer } from '../../components';
-import { usePolicies } from '../../context/PoliciesContext';
 import { colors, spacing, typography } from '../../theme';
 import { PolicyMetaBar } from './PolicyMetaBar';
 import { PolicySection } from './PolicySection';
 import { PolicyScrollFooter } from './PolicyScrollFooter';
+import { usePolicyScroll } from './usePolicyScroll';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PolicyPrivacy'>;
 
 export function PolicyPrivacyScreen({ navigation }: Props) {
-  const { getDocument, acceptPolicy } = usePolicies();
-  const doc = getDocument('privacy');
-
-  const [contentHeight, setContentHeight] = useState(0);
-  const [layoutHeight, setLayoutHeight] = useState(0);
-  const [scrollProgress, setScrollProgress] = useState(0);
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const scrollY = event.nativeEvent.contentOffset.y;
-      const percent =
-        contentHeight <= layoutHeight ? 100 : (scrollY / (contentHeight - layoutHeight)) * 100;
-      setScrollProgress(Math.min(100, Math.max(0, percent)));
-    },
-    [contentHeight, layoutHeight],
-  );
-
-  const handleAccept = useCallback(() => {
-    acceptPolicy('privacy');
-    Alert.alert('Accepted', 'Privacy Policy accepted.');
-  }, [acceptPolicy]);
-
-  const handleDownload = useCallback(() => {
-    Alert.alert('Download PDF', 'Coming soon.');
-  }, []);
+  const { progress, reachedEnd, scrollProps } = usePolicyScroll();
 
   return (
     <ScreenContainer edges={['top', 'left', 'right', 'bottom']}>
       <NavHeader title="Privacy Policy" onBack={() => navigation.goBack()} />
-      <PolicyMetaBar lastUpdatedLabel={doc.lastUpdatedLabel} scrollProgress={scrollProgress} />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        onContentSizeChange={(w, h) => setContentHeight(h)}
-        onLayout={e => setLayoutHeight(e.nativeEvent.layout.height)}
-      >
+      <PolicyMetaBar scrollProgress={progress} />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} {...scrollProps}>
         <PolicySection
           heading="1. WHAT WE COLLECT"
           bullets={[
             'Device information: model, OS version, unique device identifiers, IP address.',
-            'Location: GPS coordinates at order pickup, delivery zones for logistics optimization.',
-            'Transaction data: order history, invoices, payment methods (tokenised), settlement records.',
-            'Business data: GSTIN, FSSAI licence number, bank account details (encrypted at rest).',
+            'Location: your store address and map coordinates, used to match orders with delivery partners.',
+            'Transaction data: order history, invoices and settlement records.',
+            'Business data: GSTIN, PAN, business documents and bank account details.',
           ]}
         />
         <PolicySection
@@ -99,22 +68,16 @@ export function PolicyPrivacyScreen({ navigation }: Props) {
         <PolicySection
           heading="6. SECURITY MEASURES"
           paragraphs={[
-            'We employ AES-256 encryption at rest, TLS 1.3 in transit, and role-based access controls. Security audits are conducted quarterly by an independent third-party firm. We notify you within 72 hours of detecting any data breach affecting your account.',
+            'We use industry-standard safeguards and role-based access controls to protect your data. If we become aware of a data breach affecting your account, we will notify you as required by applicable law.',
           ]}
         />
         <PolicySection heading="7. CONTACT" />
         <Text style={styles.trailingParagraph}>
-          For privacy-related inquiries, reach our Data Protection Officer at{' '}
-          <Text style={styles.emailText}>privacy@verdant.in</Text> or write to Verdant Technologies Pvt.
-          Ltd., 4th Floor, Nexus Tower, Koramangala, Bengaluru — 560034.
+          For privacy-related inquiries, contact us at{' '}
+          <Text style={styles.emailText}>support@verdant.example</Text>.
         </Text>
       </ScrollView>
-      <PolicyScrollFooter
-        mode="accept-download"
-        scrollProgress={scrollProgress}
-        onAccept={handleAccept}
-        onDownload={handleDownload}
-      />
+      <PolicyScrollFooter canAccept={reachedEnd} onAccept={() => navigation.goBack()} />
     </ScreenContainer>
   );
 }

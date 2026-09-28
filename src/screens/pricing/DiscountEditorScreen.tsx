@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button } from '../../components';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
+import { NoVariantsState, VariantPicker } from '../inventory/VariantPicker';
 import { PricingBackHeader } from './PricingBackHeader';
+import { usePricingVariant } from './usePricingVariant';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'DiscountEditor'>;
 
@@ -14,36 +17,65 @@ type Mode = 'percentage' | 'fixed';
 
 const QUICK_PERCENTAGES = [5, 10, 15, 20];
 
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function currentDiscount(mrp: number, sp: number, mode: Mode) {
+  if (mrp <= 0 || sp >= mrp) return '0';
+  return String(round2(mode === 'percentage' ? ((mrp - sp) / mrp) * 100 : mrp - sp));
+}
+
 export function DiscountEditorScreen({ navigation, route }: Props) {
   const { productId } = route.params;
   const { products } = useProductCatalog();
   const product = products.find(item => item.id === productId);
-
-  const initialPct =
-    product && product.mrp > 0 ? (((product.mrp - product.sellingPrice) / product.mrp) * 100).toFixed(1) : '0';
+  const { variants, variant, variantId, setVariantId, saveVariantPrice } = usePricingVariant(product);
   const [mode, setMode] = useState<Mode>('percentage');
-  const [valueText, setValueText] = useState(initialPct);
+  const [valueText, setValueText] = useState(currentDiscount(variant?.mrp ?? 0, variant?.sellingPrice ?? 0, 'percentage'));
+  const [saving, setSaving] = useState(false);
 
-  if (!product) return null;
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <PricingBackHeader title="Discount" onBack={() => navigation.goBack()} />
+      </SafeAreaView>
+    );
+  }
 
+  const mrp = variant?.mrp ?? 0;
   const value = parseFloat(valueText) || 0;
-  const discountedPrice =
-    mode === 'percentage' ? Math.round(product.mrp * (1 - value / 100)) : Math.round(product.mrp - value);
-  const clampedPrice = Math.max(0, Math.min(product.mrp, discountedPrice));
-  const customerSaves = product.mrp - clampedPrice;
-  const discountPct = product.mrp > 0 ? (customerSaves / product.mrp) * 100 : 0;
+  const discountedPrice = round2(mode === 'percentage' ? mrp * (1 - value / 100) : mrp - value);
+  const invalid = !variant || discountedPrice <= 0 || discountedPrice > mrp || value < 0;
+  const customerSaves = round2(Math.max(0, mrp - discountedPrice));
 
-  function handleSave() {
-    if (!product) return;
-    const previousPct = product.mrp > 0 ? ((product.mrp - product.sellingPrice) / product.mrp) * 100 : 0;
-    navigation.navigate('PriceReview', {
-      productId,
-      pendingSellingPrice: clampedPrice,
-      changes: [
-        { field: 'Selling Price', from: `₹${product.sellingPrice}`, to: `₹${clampedPrice}` },
-        { field: 'Discount', from: `${previousPct.toFixed(1)}%`, to: `${discountPct.toFixed(1)}%` },
-      ],
-    });
+  function selectVariant(id: string) {
+    setVariantId(id);
+    const next = variants.find(item => item.id === id);
+    setValueText(currentDiscount(next?.mrp ?? 0, next?.sellingPrice ?? 0, mode));
+  }
+
+  function switchMode(next: Mode) {
+    if (next === mode) return;
+    setMode(next);
+    setValueText(currentDiscount(mrp, invalid ? variant?.sellingPrice ?? 0 : discountedPrice, next));
+  }
+
+  async function handleSave() {
+    if (invalid || saving || !variant) return;
+    setSaving(true);
+    try {
+      await saveVariantPrice({ sellingPrice: discountedPrice });
+      navigation.replace('PriceUpdated', {
+        productId,
+        headline: 'Selling Price',
+        message: `Selling price for ${product!.name}${variants.length > 1 ? ` (${variant.size})` : ''} is now ₹${discountedPrice} (₹${customerSaves} off MRP).`,
+      });
+    } catch (err) {
+      Alert.alert('Could not save', getApiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -51,10 +83,13 @@ export function DiscountEditorScreen({ navigation, route }: Props) {
       <PricingBackHeader title="Discount" onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={styles.content}>
+        {!variant ? <NoVariantsState /> : null}
+        <VariantPicker variants={variants} selectedId={variantId} onSelect={selectVariant} />
+
         <View style={styles.modeTabs}>
           <Pressable
             style={[styles.modeTab, mode === 'percentage' && styles.modeTabActive]}
-            onPress={() => setMode('percentage')}
+            onPress={() => switchMode('percentage')}
           >
             <Text style={[styles.modeTabText, mode === 'percentage' && styles.modeTabTextActive]}>
               Percentage %
@@ -62,7 +97,7 @@ export function DiscountEditorScreen({ navigation, route }: Props) {
           </Pressable>
           <Pressable
             style={[styles.modeTab, mode === 'fixed' && styles.modeTabActive]}
-            onPress={() => setMode('fixed')}
+            onPress={() => switchMode('fixed')}
           >
             <Text style={[styles.modeTabText, mode === 'fixed' && styles.modeTabTextActive]}>Fixed Amount ₹</Text>
           </Pressable>
@@ -104,21 +139,21 @@ export function DiscountEditorScreen({ navigation, route }: Props) {
           <Text style={styles.previewTitle}>Preview</Text>
           <View style={styles.previewRow}>
             <Text style={styles.previewLabel}>Original (MRP)</Text>
-            <Text style={styles.previewValue}>₹{product.mrp}</Text>
+            <Text style={styles.previewValue}>₹{mrp}</Text>
           </View>
           <View style={styles.previewRow}>
             <Text style={styles.previewLabel}>Discounted price</Text>
-            <Text style={styles.previewValueBold}>₹{clampedPrice}</Text>
+            <Text style={styles.previewValueBold}>{invalid ? '—' : `₹${discountedPrice}`}</Text>
           </View>
           <View style={styles.previewRow}>
             <Text style={styles.previewLabel}>Customer saves</Text>
-            <Text style={styles.previewValueBold}>₹{customerSaves}</Text>
+            <Text style={styles.previewValueBold}>{invalid ? '—' : `₹${customerSaves}`}</Text>
           </View>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button label="Save" onPress={handleSave} />
+        <Button label="Save" onPress={handleSave} disabled={invalid || saving} loading={saving} />
       </View>
     </SafeAreaView>
   );

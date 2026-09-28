@@ -1,83 +1,46 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, Checkbox, NavHeader } from '../../components';
-import { CATEGORIES } from '../../data/categories';
+import { Button, NavHeader } from '../../components';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { useInventory } from '../../context/InventoryContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'InventoryFilter'>;
 
-const STOCK_STATUS_OPTIONS = [
-  { key: 'in-stock', label: 'In Stock', dotColor: colors.primary },
-  { key: 'low-stock', label: 'Low Stock (below reorder level)', dotColor: colors.warning },
-  { key: 'out-of-stock', label: 'Out of Stock', dotColor: colors.error },
-  { key: 'unavailable', label: 'Inactive / Hidden', dotColor: colors.textSecondary },
-];
-
 export function InventoryFilterScreen({ navigation }: Props) {
-  const [statuses, setStatuses] = useState<string[]>(['in-stock', 'low-stock']);
-  const [categoryIds, setCategoryIds] = useState<string[]>([]);
-
-  const activeCount = statuses.length + categoryIds.length;
-
-  function toggleStatus(key: string) {
-    setStatuses(prev => (prev.includes(key) ? prev.filter(item => item !== key) : [...prev, key]));
-  }
+  const { categories, products } = useProductCatalog();
+  const { categoryFilter, setCategoryFilter } = useInventory();
+  const [categoryIds, setCategoryIds] = useState<string[]>(categoryFilter);
 
   function toggleCategory(id: string) {
     setCategoryIds(prev => (prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]));
   }
 
-  function handleReset() {
-    setStatuses([]);
-    setCategoryIds([]);
+  function handleApply() {
+    setCategoryFilter(categoryIds);
+    navigation.goBack();
   }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View>
         <NavHeader title="Filter Inventory" onBack={() => navigation.goBack()} />
-        <Pressable style={styles.resetButton} onPress={handleReset}>
+        <Pressable style={styles.resetButton} onPress={() => setCategoryIds([])}>
           <Text style={styles.resetText}>Reset</Text>
         </Pressable>
       </View>
 
-      <View style={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Stock Status</Text>
-          {STOCK_STATUS_OPTIONS.map((option, index) => {
-            const checked = statuses.includes(option.key);
-            return (
-              <Pressable
-                key={option.key}
-                style={[styles.statusRow, index < STOCK_STATUS_OPTIONS.length - 1 && styles.statusRowDivider]}
-                onPress={() => toggleStatus(option.key)}
-              >
-                <Checkbox checked={checked} onToggle={() => toggleStatus(option.key)} />
-                <View style={[styles.dot, { backgroundColor: option.dotColor }]} />
-                <Text style={styles.statusLabel}>{option.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.quantityHeaderRow}>
-            <Text style={styles.cardTitle}>Stock Quantity</Text>
-            <Text style={styles.quantityValue}>0 – 500 units</Text>
-          </View>
-          <View style={styles.sliderTrack}>
-            <View style={styles.sliderFill} />
-          </View>
-        </View>
-
+      <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Category</Text>
+          {categories.length === 0 ? <Text style={styles.statusLabel}>No categories available</Text> : null}
           <View style={styles.chipWrap}>
-            {CATEGORIES.map(category => {
+            {categories.map(category => {
               const active = categoryIds.includes(category.id);
+              const count = products.filter(product => product.categoryId === category.id).length;
               return (
                 <Pressable
                   key={category.id}
@@ -85,19 +48,19 @@ export function InventoryFilterScreen({ navigation }: Props) {
                   style={[styles.chip, active && styles.chipActive]}
                 >
                   <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
-                    {category.name.split(' & ')[0]}
+                    {category.name} ({count})
                   </Text>
                 </Pressable>
               );
             })}
           </View>
         </View>
-      </View>
+      </ScrollView>
 
       <View style={styles.footer}>
         <Button
-          label={`Apply Filters${activeCount > 0 ? ` (${activeCount} active)` : ''}`}
-          onPress={() => navigation.goBack()}
+          label={`Apply Filters${categoryIds.length > 0 ? ` (${categoryIds.length} active)` : ''}`}
+          onPress={handleApply}
         />
       </View>
     </SafeAreaView>
@@ -122,9 +85,9 @@ const styles = StyleSheet.create({
     color: colors.error,
   },
   content: {
-    flex: 1,
     paddingHorizontal: spacing.xxl,
     paddingTop: spacing.xl,
+    paddingBottom: spacing.xl,
     gap: spacing.xl,
   },
   card: {
@@ -142,47 +105,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.72,
     marginBottom: spacing.sm,
   },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  statusRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 9999,
-  },
   statusLabel: {
     ...typography.label,
     fontFamily: fontFamilies.regular,
     color: colors.textPrimary,
     flex: 1,
-  },
-  quantityHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  quantityValue: {
-    ...typography.captionSemibold,
-    color: colors.primary,
-  },
-  sliderTrack: {
-    height: 6,
-    borderRadius: radii.full,
-    backgroundColor: colors.border,
-    marginTop: spacing.md,
-    overflow: 'hidden',
-  },
-  sliderFill: {
-    width: '100%',
-    height: 6,
-    backgroundColor: colors.primary,
   },
   chipWrap: {
     flexDirection: 'row',

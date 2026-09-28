@@ -5,12 +5,11 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useOfferDraft } from '../../context/OfferDraftContext';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { OfferWizardHeader } from './OfferWizardHeader';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OfferDiscountValue'>;
-
-const MOCK_MRP = 68;
 
 const PERCENTAGE_QUICK_PICKS = [5, 10, 15, 20, 25];
 const FLAT_QUICK_PICKS = [10, 20, 30, 50, 100];
@@ -21,38 +20,47 @@ function formatCurrency(value: number) {
 
 export function OfferDiscountValueScreen({ navigation }: Props) {
   const { draft, updateDiscountValue } = useOfferDraft();
-  const discountType = draft.type?.discountType ?? 'percentage';
-  const isPercentage = discountType === 'percentage';
+  const { products } = useProductCatalog();
+  const isPercentage = draft.discountType === 'percentage';
 
-  const [value, setValue] = useState(draft.discountValue.value);
+  const [value, setValue] = useState(draft.discountValue);
+  const [error, setError] = useState<string | undefined>();
 
   const quickPicks = isPercentage ? PERCENTAGE_QUICK_PICKS : FLAT_QUICK_PICKS;
   const step = isPercentage ? 1 : 5;
-  const minValue = isPercentage ? 1 : 5;
-  const maxValue = isPercentage ? 90 : MOCK_MRP - 1;
+  const maxValue = isPercentage ? 100 : 99999;
 
-  function clamp(next: number) {
-    return Math.min(maxValue, Math.max(minValue, next));
+  const previewProduct = useMemo(() => {
+    if (draft.scope === 'entire-store') return products[0];
+    const productIds = new Set(draft.productIds);
+    const categoryIds = new Set(draft.categoryIds);
+    return products.find(product => productIds.has(product.id) || categoryIds.has(product.categoryId));
+  }, [draft.scope, draft.productIds, draft.categoryIds, products]);
+
+  function setClamped(next: number) {
+    setValue(Math.min(maxValue, Math.max(0, next)));
+    if (error) setError(undefined);
   }
 
   function handleTextChange(text: string) {
     const digitsOnly = text.replace(/[^0-9]/g, '');
-    if (!digitsOnly) {
-      setValue(0);
-      return;
-    }
-    setValue(clamp(Number(digitsOnly)));
+    setClamped(digitsOnly ? Number(digitsOnly) : 0);
   }
 
-  const discountedPrice = useMemo(() => {
-    if (isPercentage) return MOCK_MRP * (1 - value / 100);
-    return Math.max(MOCK_MRP - value, 0);
-  }, [isPercentage, value]);
-
-  const savings = MOCK_MRP - discountedPrice;
+  const basePrice = previewProduct?.sellingPrice ?? 0;
+  const discountedPrice = isPercentage ? basePrice * (1 - value / 100) : Math.max(basePrice - value, 0);
+  const savings = basePrice - discountedPrice;
 
   function handleNext() {
-    updateDiscountValue({ value });
+    if (!(value > 0)) {
+      setError('Discount value must be greater than 0');
+      return;
+    }
+    if (isPercentage && value > 100) {
+      setError('Percentage discount cannot exceed 100%');
+      return;
+    }
+    updateDiscountValue(value);
     navigation.navigate('OfferStartDate');
   }
 
@@ -63,7 +71,7 @@ export function OfferDiscountValueScreen({ navigation }: Props) {
         <View style={styles.valueSection}>
           <View style={styles.stepperRow}>
             <Pressable
-              onPress={() => setValue(clamp(value - step))}
+              onPress={() => setClamped(value - step)}
               style={styles.stepperButton}
               hitSlop={8}
             >
@@ -76,13 +84,13 @@ export function OfferDiscountValueScreen({ navigation }: Props) {
                 onChangeText={handleTextChange}
                 keyboardType="number-pad"
                 style={styles.valueInput}
-                maxLength={4}
+                maxLength={isPercentage ? 3 : 5}
               />
               <Text style={styles.valueUnit}>{isPercentage ? '%' : '₹'}</Text>
             </View>
 
             <Pressable
-              onPress={() => setValue(clamp(value + step))}
+              onPress={() => setClamped(value + step)}
               style={styles.stepperButton}
               hitSlop={8}
             >
@@ -92,6 +100,7 @@ export function OfferDiscountValueScreen({ navigation }: Props) {
           <Text style={styles.valueCaption}>
             {isPercentage ? 'Percentage discount' : 'Flat amount off'}
           </Text>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
 
         <View style={styles.chipsRow}>
@@ -100,7 +109,7 @@ export function OfferDiscountValueScreen({ navigation }: Props) {
             return (
               <Pressable
                 key={pick}
-                onPress={() => setValue(pick)}
+                onPress={() => setClamped(pick)}
                 style={[styles.chip, selected && styles.chipSelected]}
               >
                 <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
@@ -111,38 +120,48 @@ export function OfferDiscountValueScreen({ navigation }: Props) {
           })}
         </View>
 
-        <View style={styles.previewCard}>
-          <Text style={styles.previewTitle}>Price Preview</Text>
-
-          <View style={styles.previewRow}>
-            <Text style={styles.previewRowLabel}>MRP</Text>
-            <Text style={styles.previewMrp}>{formatCurrency(MOCK_MRP)}</Text>
-          </View>
-
-          <View style={styles.previewRow}>
-            <Text style={styles.previewRowLabelDark}>
-              After {isPercentage ? `${value}%` : `₹${value}`} off
+        {previewProduct ? (
+          <View style={styles.previewCard}>
+            <Text style={styles.previewTitle}>Price Preview</Text>
+            <Text style={styles.previewRowLabel} numberOfLines={1}>
+              {previewProduct.name}
             </Text>
-            <Text style={styles.previewDiscounted}>{formatCurrency(discountedPrice)}</Text>
-          </View>
 
-          <View style={styles.previewDivider} />
+            <View style={styles.previewRow}>
+              <Text style={styles.previewRowLabel}>Selling price</Text>
+              <Text style={styles.previewMrp}>{formatCurrency(basePrice)}</Text>
+            </View>
 
-          <View style={styles.previewRow}>
-            <Text style={styles.previewSavesLabel}>Customer saves</Text>
-            <Text style={styles.previewSavesValue}>{formatCurrency(savings)}</Text>
+            <View style={styles.previewRow}>
+              <Text style={styles.previewRowLabelDark}>
+                After {isPercentage ? `${value}%` : `₹${value}`} off
+              </Text>
+              <Text style={styles.previewDiscounted}>{formatCurrency(discountedPrice)}</Text>
+            </View>
+
+            <View style={styles.previewDivider} />
+
+            <View style={styles.previewRow}>
+              <Text style={styles.previewSavesLabel}>Customer saves</Text>
+              <Text style={styles.previewSavesValue}>{formatCurrency(savings)}</Text>
+            </View>
           </View>
-        </View>
+        ) : null}
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button label="Next: Set Dates" onPress={handleNext} />
+        <Button label="Next: Set Dates" onPress={handleNext} disabled={!(value > 0)} />
       </View>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    marginTop: spacing.sm,
+  },
   content: {
     paddingHorizontal: spacing.xxl,
     paddingTop: spacing.xxl,

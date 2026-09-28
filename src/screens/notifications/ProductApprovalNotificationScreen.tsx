@@ -2,13 +2,13 @@ import React, { useMemo } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, InfoBanner, NavHeader, ScreenContainer } from '../../components';
+import { Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { NotificationHero } from './NotificationHero';
 import { DetailCard } from './DetailCard';
 import { useNotifications } from '../../context/NotificationsContext';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductApprovalNotification'>;
@@ -24,17 +24,17 @@ export function ProductApprovalNotificationScreen({ navigation, route }: Props) 
   const { getNotification } = useNotifications();
   const { products } = useProductCatalog();
   const notification = getNotification(notificationId);
-  const meta = NOTIFICATION_CATEGORY_META['product-approval'];
+  const meta = getNotificationMeta('product-approval');
 
   const product = useMemo(() => {
-    if (!notification?.productName) return undefined;
-    return products.find(item => item.name === notification.productName);
+    if (!notification?.productId) return undefined;
+    return products.find(item => item.id === notification.productId);
   }, [notification, products]);
 
   if (!notification) {
     return (
       <ScreenContainer backgroundColor={colors.white}>
-        <NavHeader title="Product Approved" onBack={() => navigation.goBack()} />
+        <NavHeader title="Product Update" onBack={() => navigation.goBack()} />
         <View style={styles.notFound}>
           <Text style={styles.notFoundText}>Notification not found</Text>
         </View>
@@ -42,19 +42,21 @@ export function ProductApprovalNotificationScreen({ navigation, route }: Props) 
     );
   }
 
-  const isRejected = /reject/i.test(`${notification.title} ${notification.subtitle}`);
+  const isRejected = product?.status === 'rejected';
+  const isLive = product !== undefined && !isRejected;
+  const headerTitle = isRejected ? 'Product Rejected' : isLive ? 'Product Approved' : 'Product Update';
 
   function handleViewProduct() {
     if (product) {
-      navigation.navigate('ProductDetails', { productId: product.id });
+      navigation.navigate(isRejected ? 'EditProduct' : 'ProductDetails', { productId: product.id });
     } else {
-      Alert.alert('Product not found', "We couldn't match this notification to a catalog listing.");
+      Alert.alert('Product not found', 'This product is no longer in your catalog.');
     }
   }
 
   return (
     <ScreenContainer backgroundColor={colors.white} scrollable>
-      <NavHeader title={isRejected ? 'Product Rejected' : 'Product Approved'} onBack={() => navigation.goBack()} />
+      <NavHeader title={headerTitle} onBack={() => navigation.goBack()} />
       <NotificationHero
         icon={meta.icon}
         iconColor={isRejected ? '#D92D20' : meta.iconColor}
@@ -64,11 +66,7 @@ export function ProductApprovalNotificationScreen({ navigation, route }: Props) 
         timeLabel={notification.timeLabel}
       />
       <View style={styles.content}>
-        {!isRejected ? (
-          <InfoBanner variant="success" message="Status: Now Live on Verdant" />
-        ) : null}
-
-        {!isRejected ? (
+        {isLive ? (
           <DetailCard title="Next Steps">
             {NEXT_STEPS.map((step, index) => (
               <View key={step} style={[styles.stepRow, index > 0 && styles.stepRowSpacing]}>
@@ -83,7 +81,7 @@ export function ProductApprovalNotificationScreen({ navigation, route }: Props) 
 
         <View style={styles.footerRow}>
           <View style={styles.footerButton}>
-            <Button label="View Product" onPress={handleViewProduct} />
+            <Button label={isRejected ? 'Edit Product' : 'View Product'} onPress={handleViewProduct} disabled={!product} />
           </View>
           <View style={styles.footerButton}>
             <Button label="Add Another" variant="outline" onPress={() => navigation.navigate('AddProduct')} />

@@ -3,10 +3,11 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { useProfile, DocumentStatus, type ProfileDocument, type AdditionalDocument } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus, DocumentStatus, type ProfileDocument, type AdditionalDocument } from '../../context/ProfileContext';
 import { Badge, BadgeTone, Button, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { resolveAssetUrl } from '../../utils/resolveAssetUrl';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileDocuments'>;
@@ -25,6 +26,7 @@ const STATUS_TONE: Record<DocumentStatus, BadgeTone> = {
 
 export function ProfileDocumentsScreen({ navigation }: Props) {
   const { documents, additionalDocuments, removeAdditionalDocument } = useProfile();
+  useProfileRefreshOnFocus();
 
   const total = documents.length;
   const verifiedCount = documents.filter(d => d.status === 'verified').length;
@@ -35,16 +37,18 @@ export function ProfileDocumentsScreen({ navigation }: Props) {
     navigation.navigate('ProfileAddDocument');
   }
 
+  function openUrl(url: string) {
+    Linking.openURL(resolveAssetUrl(url)).catch(() => {
+      Alert.alert('Could not open document', 'No app is available to open this file.');
+    });
+  }
+
   function handleDownload(doc: ProfileDocument) {
-    if (!doc.url) {
-      Alert.alert('Not available', 'This document has not been uploaded yet.');
-      return;
-    }
-    Linking.openURL(resolveAssetUrl(doc.url));
+    if (doc.url) openUrl(doc.url);
   }
 
   function handleDownloadAdditional(doc: AdditionalDocument) {
-    Linking.openURL(resolveAssetUrl(doc.url));
+    openUrl(doc.url);
   }
 
   function handleRemoveAdditional(doc: AdditionalDocument) {
@@ -54,8 +58,8 @@ export function ProfileDocumentsScreen({ navigation }: Props) {
         text: 'Remove',
         style: 'destructive',
         onPress: () => {
-          removeAdditionalDocument(doc.id).catch(() => {
-            Alert.alert('Error', 'Could not remove document. Please try again.');
+          removeAdditionalDocument(doc.id).catch(err => {
+            Alert.alert('Could not remove document', getApiErrorMessage(err, 'Please try again.'));
           });
         },
       },
@@ -114,9 +118,11 @@ export function ProfileDocumentsScreen({ navigation }: Props) {
                 >
                   <Icon name="eye" size={14} color={colors.primaryDark} />
                 </Pressable>
-                <Pressable style={styles.iconButton} onPress={() => handleDownload(doc)} hitSlop={6}>
-                  <Icon name="file-text" size={14} color={colors.primaryDark} />
-                </Pressable>
+                {doc.url ? (
+                  <Pressable style={styles.iconButton} onPress={() => handleDownload(doc)} hitSlop={6}>
+                    <Icon name="file-text" size={14} color={colors.primaryDark} />
+                  </Pressable>
+                ) : null}
               </View>
             </View>
           ))}

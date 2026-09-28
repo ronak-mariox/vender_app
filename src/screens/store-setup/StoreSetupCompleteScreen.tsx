@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, StatusBar, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -7,7 +7,6 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useStoreSetup } from '../../context/StoreSetupContext';
-import { api, getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StoreSetupComplete'>;
@@ -24,25 +23,6 @@ const COMPLETED_ITEMS = [
 export function StoreSetupCompleteScreen({ navigation }: Props) {
   const { data } = useStoreSetup();
   const storeName = data.profile?.storeName ?? 'Your store';
-  const [finalizing, setFinalizing] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        await api.post('/vendor/store-setup/complete');
-      } catch (err) {
-        if (!cancelled) {
-          Alert.alert('Could not finish store setup', getApiErrorMessage(err));
-        }
-      } finally {
-        if (!cancelled) setFinalizing(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
   const statusLabel =
     data.storeStatus === 'open'
       ? 'Store Status: Open'
@@ -88,17 +68,8 @@ export function StoreSetupCompleteScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.footer}>
-            <Button
-              label="Go to Dashboard"
-              loading={finalizing}
-              onPress={() => navigation.replace('Dashboard')}
-            />
-            <Button
-              label="Add First Product"
-              variant="outline"
-              disabled={finalizing}
-              onPress={() => navigation.navigate('AddProduct')}
-            />
+            <Button label="Go to Dashboard" onPress={() => navigation.replace('Dashboard')} />
+            <Button label="Add First Product" variant="outline" onPress={() => navigation.navigate('AddProduct')} />
           </View>
         </View>
       </SafeAreaView>
