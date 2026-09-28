@@ -50,11 +50,10 @@ export function ProfileDocumentStatusScreen({ navigation, route }: Props) {
   const tone = STATUS_COLORS[doc.status];
 
   function handleDownload() {
-    if (!doc.url) {
-      Alert.alert('Not available', 'This document has not been uploaded yet.');
-      return;
-    }
-    Linking.openURL(resolveAssetUrl(doc.url));
+    if (!doc.url) return;
+    Linking.openURL(resolveAssetUrl(doc.url)).catch(() => {
+      Alert.alert('Could not open document', 'No app is available to open this file.');
+    });
   }
 
   return (
@@ -114,17 +113,29 @@ export function ProfileDocumentStatusScreen({ navigation, route }: Props) {
         ) : null}
 
         <View style={styles.footer}>
-          <Button
-            label="Download"
-            icon={<Icon name="file-text" size={18} color={colors.white} />}
-            onPress={handleDownload}
-          />
-          <View style={styles.footerGap} />
-          <Button
-            label="Replace Document"
-            variant="outline"
-            onPress={() => navigation.navigate('ProfileReplaceDocument', { documentId })}
-          />
+          {doc.url ? (
+            <>
+              <Button
+                label="Download"
+                icon={<Icon name="file-text" size={18} color={colors.white} />}
+                onPress={handleDownload}
+              />
+              <View style={styles.footerGap} />
+            </>
+          ) : null}
+          {documentId === 'bankDetails' ? (
+            <Button
+              label="Manage Bank Details"
+              variant="outline"
+              onPress={() => navigation.navigate('ProfileBankDetails')}
+            />
+          ) : (
+            <Button
+              label="Replace Document"
+              variant="outline"
+              onPress={() => navigation.navigate('ProfileReplaceDocument', { documentId })}
+            />
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>

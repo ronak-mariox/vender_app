@@ -9,6 +9,7 @@ import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { useInventory } from '../../context/InventoryContext';
 import { STOCK_REASONS } from '../../utils/inventory';
 import { getApiErrorMessage } from '../../services/api';
+import { NoVariantsState, VariantPicker, primaryVariantId, stockTypeForReason } from './VariantPicker';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StockAdjustment'>;
@@ -19,8 +20,20 @@ export function StockAdjustmentScreen({ navigation, route }: Props) {
   const { products } = useProductCatalog();
   const { recordStockChange } = useInventory();
 
-  const initialProduct = products.find(item => item.id === route.params?.productId) ?? products[0];
-  const [productName, setProductName] = useState(initialProduct?.name ?? '');
+  const productOptions = useMemo(() => {
+    const seen = new Map<string, number>();
+    return products.map(item => {
+      const base = item.sku ? `${item.name} · ${item.sku}` : item.name;
+      const count = (seen.get(base) ?? 0) + 1;
+      seen.set(base, count);
+      return { id: item.id, label: count > 1 ? `${base} (${count})` : base };
+    });
+  }, [products]);
+
+  const [productId, setProductId] = useState<string | undefined>(route.params?.productId);
+  const product = useMemo(() => products.find(item => item.id === productId), [products, productId]);
+  const [variantId, setVariantId] = useState<string | null>(primaryVariantId(product?.variants));
+  const variant = product?.variants?.find(item => item.id === variantId);
   const [adjustmentType, setAdjustmentType] = useState(ADJUSTMENT_TYPES[0]);
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState(STOCK_REASONS[0]);
@@ -29,37 +42,58 @@ export function StockAdjustmentScreen({ navigation, route }: Props) {
   const [error, setError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
 
-  const product = useMemo(() => products.find(item => item.name === productName), [products, productName]);
   const qtyNumber = parseInt(quantity, 10) || 0;
+  const currentStock = variant?.stock ?? 0;
 
   const afterStock = useMemo(() => {
-    if (!product) return 0;
-    if (adjustmentType === 'Add Stock (Incoming)') return product.stock + qtyNumber;
-    if (adjustmentType === 'Remove Stock (Outgoing)') return Math.max(0, product.stock - qtyNumber);
+    if (adjustmentType === 'Add Stock (Incoming)') return currentStock + qtyNumber;
+    if (adjustmentType === 'Remove Stock (Outgoing)') return Math.max(0, currentStock - qtyNumber);
     return qtyNumber;
-  }, [product, adjustmentType, qtyNumber]);
+  }, [currentStock, adjustmentType, qtyNumber]);
+
+  function selectProduct(label: string) {
+    const id = productOptions.find(option => option.label === label)?.id;
+    const next = products.find(item => item.id === id);
+    setProductId(id);
+    setVariantId(primaryVariantId(next?.variants));
+    setError(undefined);
+  }
 
   async function handleSave() {
     if (!product) {
       setError('Select a product');
       return;
     }
-    if (!quantity.trim() || qtyNumber < 0) {
+    if (!variant) {
+      setError('This product has no variant to adjust');
+      return;
+    }
+    if (!quantity.trim() || (adjustmentType !== 'Set Exact Count' && qtyNumber <= 0)) {
       setError('Enter a valid quantity');
+      return;
+    }
+    if (adjustmentType === 'Remove Stock (Outgoing)' && qtyNumber > currentStock) {
+      setError(`Only ${currentStock} units in stock`);
+      return;
+    }
+    if (afterStock === currentStock) {
+      setError('This adjustment does not change the stock');
       return;
     }
     setError(undefined);
     if (saving) return;
     setSaving(true);
     try {
+      const reasonText = notes.trim() ? `${reason} — ${notes.trim()}` : reason;
       const result = await recordStockChange({
         productId: product.id,
+        variantId: variant.id,
         newStock: afterStock,
-        reason,
-        type: adjustmentType === 'Add Stock (Incoming)' ? 'purchase' : 'adjustment',
+        reason: reasonText,
+        type: stockTypeForReason(reason, afterStock - currentStock),
         reference: reference.trim() || undefined,
       });
-      if (result?.wentOutOfStock) {
+      if (result.wentOutOfStock) {
         navigation.replace('OOSConfirmation', { productId: product.id });
       } else {
         navigation.goBack();
@@ -79,15 +113,21 @@ export function StockAdjustmentScreen({ navigation, route }: Props) {
           <SelectField
             label="Select Product"
             required
-            value={productName}
-            options={products.map(item => item.name)}
-            onChange={setProductName}
+            value={productOptions.find(option => option.id === productId)?.label ?? ''}
+            options={productOptions.map(option => option.label)}
+            onChange={selectProduct}
+            placeholder={products.length === 0 ? 'No products yet' : 'Select a product'}
           />
+
+          {product && !variant ? <NoVariantsState /> : null}
+          {product ? (
+            <VariantPicker variants={product.variants ?? []} selectedId={variantId} onSelect={setVariantId} />
+          ) : null}
 
           <View style={styles.previewRow}>
             <View style={styles.previewBox}>
               <Text style={styles.previewLabel}>Current Stock</Text>
-              <Text style={styles.previewValue}>{product?.stock ?? 0}</Text>
+              <Text style={styles.previewValue}>{currentStock}</Text>
             </View>
             <View style={styles.previewArrow}>
               <Icon name="arrow-right" size={24} color={colors.textSecondary} />
@@ -134,7 +174,7 @@ export function StockAdjustmentScreen({ navigation, route }: Props) {
             label="Reference / Invoice No."
             value={reference}
             onChangeText={setReference}
-            placeholder="e.g. INV-2026-0891"
+            placeholder="e.g. supplier invoice number"
           />
 
           <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional context" />

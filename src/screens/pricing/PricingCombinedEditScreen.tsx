@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, InfoBanner } from '../../components';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
+import { NoVariantsState, VariantPicker } from '../inventory/VariantPicker';
 import { PricingBackHeader } from './PricingBackHeader';
 import { PriceInputField } from './PriceInputField';
+import { usePricingVariant } from './usePricingVariant';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PricingCombinedEdit'>;
 
@@ -15,30 +18,55 @@ export function PricingCombinedEditScreen({ navigation, route }: Props) {
   const { productId } = route.params;
   const { products } = useProductCatalog();
   const product = products.find(item => item.id === productId);
+  const { variants, variant, variantId, setVariantId, saveVariantPrice } = usePricingVariant(product);
 
-  const [mrpText, setMrpText] = useState(String(product?.mrp ?? ''));
-  const [spText, setSpText] = useState(String(product?.sellingPrice ?? ''));
+  const [mrpText, setMrpText] = useState(String(variant?.mrp ?? ''));
+  const [spText, setSpText] = useState(String(variant?.sellingPrice ?? ''));
+  const [saving, setSaving] = useState(false);
 
-  if (!product) return null;
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <PricingBackHeader title="Edit Price" onBack={() => navigation.goBack()} />
+      </SafeAreaView>
+    );
+  }
 
   const mrp = parseFloat(mrpText) || 0;
   const sp = parseFloat(spText) || 0;
-  const invalid = sp > mrp;
-  const discountPct = mrp > 0 ? ((mrp - sp) / mrp) * 100 : 0;
-  const customerSaves = Math.max(0, mrp - sp);
+  const error =
+    mrp <= 0
+      ? 'Enter a valid MRP'
+      : sp <= 0
+      ? 'Enter a valid selling price'
+      : sp > mrp
+      ? 'Selling price cannot exceed MRP'
+      : undefined;
+  const discountPct = mrp > 0 && !error ? ((mrp - sp) / mrp) * 100 : 0;
+  const customerSaves = error ? 0 : mrp - sp;
 
-  function handleSave() {
-    if (invalid || !product) return;
-    const changes = [
-      { field: 'MRP', from: `₹${product.mrp}`, to: `₹${mrp}` },
-      { field: 'Selling Price', from: `₹${product.sellingPrice}`, to: `₹${sp}` },
-      {
-        field: 'Discount',
-        from: `${(product.mrp > 0 ? ((product.mrp - product.sellingPrice) / product.mrp) * 100 : 0).toFixed(1)}%`,
-        to: `${discountPct.toFixed(1)}%`,
-      },
-    ];
-    navigation.navigate('PriceReview', { productId, pendingMrp: mrp, pendingSellingPrice: sp, changes });
+  function selectVariant(id: string) {
+    setVariantId(id);
+    const next = variants.find(item => item.id === id);
+    setMrpText(String(next?.mrp ?? ''));
+    setSpText(String(next?.sellingPrice ?? ''));
+  }
+
+  async function handleSave() {
+    if (error || saving || !variant) return;
+    setSaving(true);
+    try {
+      await saveVariantPrice({ mrp, sellingPrice: sp });
+      navigation.replace('PriceUpdated', {
+        productId,
+        headline: 'Price',
+        message: `${product!.name}${variants.length > 1 ? ` (${variant.size})` : ''} is now ₹${sp} (MRP ₹${mrp}).`,
+      });
+    } catch (err) {
+      Alert.alert('Could not save', getApiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -47,9 +75,12 @@ export function PricingCombinedEditScreen({ navigation, route }: Props) {
 
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.productName}>{product.name}</Text>
+        {!variant ? <NoVariantsState /> : null}
+        <VariantPicker variants={variants} selectedId={variantId} onSelect={selectVariant} />
 
         <PriceInputField label="MRP" value={mrpText} onChangeText={setMrpText} />
-        <PriceInputField label="Selling Price" value={spText} onChangeText={setSpText} error={invalid} />
+        <PriceInputField label="Selling Price" value={spText} onChangeText={setSpText} error={!!error} />
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         <View style={styles.previewCard}>
           <Text style={styles.previewTitle}>Live Preview</Text>
@@ -59,7 +90,7 @@ export function PricingCombinedEditScreen({ navigation, route }: Props) {
           </View>
           <View style={styles.previewRow}>
             <Text style={styles.previewLabel}>Customer saves</Text>
-            <Text style={styles.previewValueSemibold}>₹{customerSaves.toFixed(0)}</Text>
+            <Text style={styles.previewValueSemibold}>₹{customerSaves.toFixed(2)}</Text>
           </View>
         </View>
 
@@ -72,13 +103,17 @@ export function PricingCombinedEditScreen({ navigation, route }: Props) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button label="Save Changes" onPress={handleSave} disabled={invalid} />
+        <Button label="Save Changes" onPress={handleSave} disabled={!!error || saving || !variant} loading={saving} />
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: colors.white,

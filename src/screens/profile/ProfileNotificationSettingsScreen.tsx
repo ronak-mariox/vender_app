@@ -2,9 +2,10 @@ import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, NavHeader, ScreenContainer, Switch } from '../../components';
+import { NavHeader, ScreenContainer, Switch } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProfile } from '../../context/ProfileContext';
+import { getApiErrorMessage } from '../../services/api';
 import type { NotificationPref, NotificationPrefGroup } from '../../context/ProfileContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
@@ -20,12 +21,10 @@ export function ProfileNotificationSettingsScreen({ navigation }: Props) {
     items: notificationPrefs.filter(pref => pref.group === group),
   })).filter(entry => entry.items.length > 0);
 
-  function handleSave() {
-    // toggleNotificationPref already updates context state immediately on each
-    // tap, so this is a confirmation affordance rather than a batched commit.
-    Alert.alert('Saved', 'Your notification preferences have been updated.', [
-      { text: 'OK', onPress: () => navigation.goBack() },
-    ]);
+  function handleToggle(key: string) {
+    toggleNotificationPref(key).catch(err => {
+      Alert.alert('Could not update preference', getApiErrorMessage(err, 'Please try again.'));
+    });
   }
 
   return (
@@ -42,7 +41,7 @@ export function ProfileNotificationSettingsScreen({ navigation }: Props) {
                     key={pref.key}
                     pref={pref}
                     isLast={index === items.length - 1}
-                    onToggle={() => toggleNotificationPref(pref.key)}
+                    onToggle={() => handleToggle(pref.key)}
                   />
                 ))}
               </View>
@@ -51,13 +50,12 @@ export function ProfileNotificationSettingsScreen({ navigation }: Props) {
 
           <View style={styles.infoBanner}>
             <Icon name="info" size={14} color={colors.warningDark} />
-            <Text style={styles.infoBannerText}>Critical order notifications cannot be disabled.</Text>
+            <Text style={styles.infoBannerText}>
+              Changes save automatically. Critical order notifications cannot be disabled.
+            </Text>
           </View>
         </ScrollView>
 
-        <View style={styles.footer}>
-          <Button label="Save Preferences" onPress={handleSave} />
-        </View>
       </View>
     </ScreenContainer>
   );
@@ -163,10 +161,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warningDark,
     flex: 1,
-  },
-  footer: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl,
   },
 });

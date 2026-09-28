@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, InventoryRow } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { useInventoryRefresh } from './useInventoryRefresh';
 import { isInventoryCategory } from '../../utils/inventory';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -13,6 +14,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'LowStock'>;
 
 export function LowStockScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
+  const { refreshing, onRefresh } = useInventoryRefresh();
   const lowStockProducts = useMemo(
     () => products.filter(product => isInventoryCategory(product, 'low-stock')),
     [products],
@@ -41,12 +43,14 @@ export function LowStockScreen({ navigation }: Props) {
         data={lowStockProducts}
         keyExtractor={item => item.id}
         style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item }) => {
           const target = Math.max(item.reorderLevel, item.stock, 1);
           const ratio = Math.min(1, item.stock / target);
           return (
             <InventoryRow
               name={item.name}
+              imageUrl={item.images?.[0]}
               sku={item.sku}
               muted={false}
               onPress={() => navigation.navigate('ProductStockDetails', { productId: item.id })}

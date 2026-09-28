@@ -1,32 +1,25 @@
 import React from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, InfoBanner, NavHeader, ScreenContainer } from '../../components';
+import { Button, NavHeader, ScreenContainer } from '../../components';
 import { DetailCard } from './DetailCard';
 import { NotificationHero } from './NotificationHero';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
+import { useNotificationOrder } from './useNotificationOrder';
 import { useNotifications } from '../../context/NotificationsContext';
-import { useOrders, type OrderProduct } from '../../context/OrdersContext';
+import { formatMoney, openOrder } from '../orders/orderHelpers';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, fontFamilies, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'NewOrderNotification'>;
 
-const FALLBACK_ITEMS: OrderProduct[] = [
-  { name: 'Tata Salt 1kg', price: 24, qty: 2 },
-  { name: 'Amul Milk 500ml', price: 28, qty: 3 },
-  { name: 'Fortune Sunflower Oil 1L', price: 140, qty: 1 },
-];
-const FALLBACK_TOTAL = 428;
-const FALLBACK_ADDRESS = 'Rajesh Kumar, 14B Lal Bahadur Nagar, Hyderabad, Telangana – 500032';
-
 export function NewOrderNotificationScreen({ navigation, route }: Props) {
   const { notificationId } = route.params;
   const { getNotification, dismissNotification } = useNotifications();
-  const { getOrder } = useOrders();
 
   const notification = getNotification(notificationId);
-  const order = notification?.orderId ? getOrder(notification.orderId) : undefined;
+  const { order, loading, error } = useNotificationOrder(notification?.orderId);
 
   if (!notification) {
     return (
@@ -39,12 +32,16 @@ export function NewOrderNotificationScreen({ navigation, route }: Props) {
     );
   }
 
-  const meta = NOTIFICATION_CATEGORY_META[notification.category];
-  const items = order && order.products.length > 0 ? order.products : FALLBACK_ITEMS;
-  const total = order ? order.amount : FALLBACK_TOTAL;
+  const meta = getNotificationMeta(notification.category);
   const address = order
-    ? `${order.customerName}, ${order.addressLine1}, ${order.addressLine2}`
-    : FALLBACK_ADDRESS;
+    ? [order.contactName ?? order.customerName, order.addressLine1, order.addressLine2].filter(Boolean).join(', ')
+    : '';
+
+  function handleDismiss() {
+    dismissNotification(notificationId)
+      .then(() => navigation.goBack())
+      .catch(err => Alert.alert('Could not dismiss', getApiErrorMessage(err, 'Please try again.')));
+  }
 
   return (
     <ScreenContainer backgroundColor={colors.white} scrollable>
@@ -58,49 +55,50 @@ export function NewOrderNotificationScreen({ navigation, route }: Props) {
         timeLabel={notification.timeLabel}
       />
       <View style={styles.content}>
-        <DetailCard title="Order Items">
-          {items.map((item, index) => (
-            <View key={`${item.name}-${index}`} style={styles.itemRow}>
-              <Text style={styles.itemName}>{item.name}</Text>
-              <Text style={styles.itemValue}>
-                ₹{item.price} × {item.qty}
-              </Text>
-            </View>
-          ))}
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>₹{total}</Text>
-          </View>
-        </DetailCard>
+        {order ? (
+          <>
+            <DetailCard title={`Order ${order.orderNumber}`}>
+              {order.products.map((item, index) => (
+                <View key={`${item.productId}-${item.variantId}-${index}`} style={styles.itemRow}>
+                  <Text style={styles.itemName}>
+                    {item.name}
+                    {item.variantLabel ? ` · ${item.variantLabel}` : ''}
+                  </Text>
+                  <Text style={styles.itemValue}>
+                    {formatMoney(item.price)} × {item.qty}
+                  </Text>
+                </View>
+              ))}
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalValue}>{formatMoney(order.amount)}</Text>
+              </View>
+            </DetailCard>
 
-        <DetailCard title="Delivery Address">
-          <Text style={styles.addressText}>{address}</Text>
-        </DetailCard>
-
-        <InfoBanner variant="warning" message="⏱ Orders auto-expire in 15 min if not accepted." />
+            {address ? (
+              <DetailCard title="Delivery Address">
+                <Text style={styles.addressText}>{address}</Text>
+              </DetailCard>
+            ) : null}
+          </>
+        ) : loading ? (
+          <ActivityIndicator color={colors.primary} />
+        ) : error ? (
+          <Text style={styles.emptyText}>{error}</Text>
+        ) : null}
 
         <View style={styles.footerRow}>
           <View style={styles.footerButton}>
             <Button
               label="View Order"
+              disabled={!order}
               onPress={() => {
-                if (notification.orderId) {
-                  navigation.navigate('NewOrderReceived', { orderId: notification.orderId });
-                } else {
-                  Alert.alert('Order unavailable', 'This notification is not linked to an order.');
-                }
+                if (order) openOrder(navigation, order);
               }}
             />
           </View>
           <View style={styles.footerButton}>
-            <Button
-              label="Dismiss"
-              variant="outline"
-              onPress={() => {
-                dismissNotification(notificationId);
-                navigation.goBack();
-              }}
-            />
+            <Button label="Dismiss" variant="outline" onPress={handleDismiss} />
           </View>
         </View>
       </View>

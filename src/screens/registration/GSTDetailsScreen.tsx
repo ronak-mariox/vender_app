@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -15,31 +15,19 @@ import {
 } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration, type GstDetailsData } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage, getFieldErrors } from '../../services/api';
+import { api, getApiErrorMessage } from '../../services/api';
 import { pickAndUploadDocument } from '../../services/upload';
 import { filenameFromUrl } from '../../utils/format';
 import { isRequired, isValidGSTIN, type FormErrors } from '../../utils/validators';
+import { formatDisplayDate, handleRegistrationSaveError, isoToDate, toIsoDate } from './registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'GSTDetails'>;
 
 const GST_CATEGORIES = ['Regular Taxpayer', 'Composition Scheme', 'Casual Taxable Person'];
 
-type Errors = FormErrors<'gstin' | 'businessName' | 'registrationDate' | 'category'>;
-
-function toIsoDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function formatDisplayDate(iso: string): string {
-  if (!iso) return '';
-  const date = new Date(`${iso}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-}
+const FIELDS = ['gstin', 'businessName', 'registrationDate', 'category', 'certificateUrl', 'registered'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
 export function GSTDetailsScreen({ navigation }: Props) {
   const { data, updateGstDetails } = useRegistration();
@@ -47,18 +35,23 @@ export function GSTDetailsScreen({ navigation }: Props) {
     data.gstDetails ?? {
       registered: true,
       gstin: '',
-      verified: false,
       businessName: data.businessInfo?.legalName ?? '',
       registrationDate: '',
       category: '',
       certificateUrl: '',
     },
   );
-  const [verifying, setVerifying] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  useEffect(() => {
+    if (data.gstDetails) {
+      const remote = data.gstDetails;
+      setForm(prev => (remote.registered ? remote : { ...prev, registered: false }));
+    }
+  }, [data.gstDetails]);
 
   function set<K extends keyof GstDetailsData>(key: K, value: GstDetailsData[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -79,25 +72,13 @@ export function GSTDetailsScreen({ navigation }: Props) {
     }
   }
 
-  function handleVerify() {
-    if (!isValidGSTIN(form.gstin)) {
-      setErrors(prev => ({ ...prev, gstin: 'Please enter a valid 15-character GSTIN' }));
-      return;
-    }
-    clearError('gstin');
-    setVerifying(true);
-    setTimeout(() => {
-      setVerifying(false);
-      set('verified', true);
-    }, 900);
-  }
-
   async function handleUploadCertificate() {
     setUploading(true);
     try {
       const result = await pickAndUploadDocument();
       if (result) {
         set('certificateUrl', result.url);
+        clearError('certificateUrl');
       }
     } catch (err) {
       Alert.alert('Upload failed', getApiErrorMessage(err, 'Could not upload the GST certificate.'));
@@ -107,66 +88,43 @@ export function GSTDetailsScreen({ navigation }: Props) {
   }
 
   async function handleContinue() {
-    if (!form.registered) {
-      setErrors({});
-      setSaving(true);
-      try {
-        await api.patch('/vendor/registration/gst-details', {
-          registered: form.registered,
-          gstin: form.gstin,
-          businessName: form.businessName,
-          registrationDate: form.registrationDate,
-          category: form.category,
-          certificateUrl: form.certificateUrl,
-        });
-        updateGstDetails(form);
-        navigation.navigate('PANVerification');
-      } catch (err) {
-        const fieldErrors = getFieldErrors(err);
-        if (Object.keys(fieldErrors).length > 0) {
-          setErrors(fieldErrors as Errors);
-        } else {
-          setErrors({ form: getApiErrorMessage(err, 'Could not save your GST details. Please try again.') });
-        }
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
-
     const nextErrors: Errors = {};
-    if (!isValidGSTIN(form.gstin)) nextErrors.gstin = 'Please enter a valid 15-character GSTIN';
-    else if (!form.verified) nextErrors.gstin = 'Please verify your GSTIN before continuing';
-    if (!isRequired(form.businessName)) nextErrors.businessName = 'Enter the registered business name';
-    if (!isRequired(form.registrationDate)) nextErrors.registrationDate = 'Select the GST registration date';
-    if (!isRequired(form.category)) nextErrors.category = 'Select the GST category';
+    if (form.registered) {
+      if (!isValidGSTIN(form.gstin)) nextErrors.gstin = 'Please enter a valid 15-character GSTIN';
+      if (!isRequired(form.businessName)) nextErrors.businessName = 'Enter the registered business name';
+      if (!isRequired(form.registrationDate)) nextErrors.registrationDate = 'Select the GST registration date';
+      if (!isRequired(form.category)) nextErrors.category = 'Select the GST category';
+      if (!isRequired(form.certificateUrl)) nextErrors.certificateUrl = 'Upload your GST certificate';
+    }
 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
     setSaving(true);
     try {
-      await api.patch('/vendor/registration/gst-details', {
-        registered: form.registered,
-        gstin: form.gstin,
-        businessName: form.businessName,
-        registrationDate: form.registrationDate,
-        category: form.category,
-        certificateUrl: form.certificateUrl,
-      });
+      await api.patch(
+        '/vendor/registration/gst-details',
+        form.registered
+          ? {
+              registered: true,
+              gstin: form.gstin.trim().toUpperCase(),
+              businessName: form.businessName.trim(),
+              registrationDate: form.registrationDate,
+              category: form.category,
+              certificateUrl: form.certificateUrl,
+            }
+          : { registered: false },
+      );
       updateGstDetails(form);
       navigation.navigate('PANVerification');
     } catch (err) {
-      const fieldErrors = getFieldErrors(err);
-      if (Object.keys(fieldErrors).length > 0) {
-        setErrors(fieldErrors as Errors);
-      } else {
-        setErrors({ form: getApiErrorMessage(err, 'Could not save your GST details. Please try again.') });
-      }
+      handleRegistrationSaveError<Errors>(err, setErrors, 'Could not save your GST details. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
   }
+
+  const gstinLooksValid = isValidGSTIN(form.gstin);
 
   return (
     <ScreenContainer backgroundColor={colors.surface} scrollable>
@@ -198,34 +156,21 @@ export function GSTDetailsScreen({ navigation }: Props) {
                 <Text style={styles.label}>
                   GSTIN <Text style={styles.required}>*</Text>
                 </Text>
-                <View style={styles.inlineRow}>
-                  <View style={styles.inlineInput}>
-                    <Input
-                      leftIcon="hash"
-                      value={form.gstin}
-                      onChangeText={text => {
-                        set('gstin', text.toUpperCase().slice(0, 15));
-                        set('verified', false);
-                        clearError('gstin');
-                      }}
-                      placeholder="29AABCU9603R1ZM"
-                      autoCapitalize="characters"
-                      error={errors.gstin}
-                    />
-                  </View>
-                  <Button
-                    label={verifying ? 'Checking' : form.verified ? 'Verified' : 'Verify'}
-                    variant="outline"
-                    fullWidth={false}
-                    loading={verifying}
-                    disabled={form.verified}
-                    onPress={handleVerify}
-                  />
-                </View>
-                {form.verified ? (
+                <Input
+                  leftIcon="hash"
+                  value={form.gstin}
+                  onChangeText={text => {
+                    set('gstin', text.toUpperCase().slice(0, 15));
+                    clearError('gstin');
+                  }}
+                  placeholder="15-character GSTIN"
+                  autoCapitalize="characters"
+                  error={errors.gstin}
+                />
+                {gstinLooksValid && !errors.gstin ? (
                   <View style={styles.verifiedRow}>
                     <Icon name="check-circle" size={13} color={colors.primary} />
-                    <Text style={styles.verifiedText}>GSTIN verified successfully</Text>
+                    <Text style={styles.verifiedText}>Format looks valid</Text>
                   </View>
                 ) : null}
               </View>
@@ -237,8 +182,7 @@ export function GSTDetailsScreen({ navigation }: Props) {
                   set('businessName', text);
                   clearError('businessName');
                 }}
-                editable={form.verified === false}
-                helperText={form.verified ? 'Auto-filled from GST portal' : undefined}
+                helperText="As shown on your GST certificate"
                 error={errors.businessName}
               />
               <View style={styles.dateField}>
@@ -259,7 +203,7 @@ export function GSTDetailsScreen({ navigation }: Props) {
               </View>
               {showDatePicker ? (
                 <DateTimePicker
-                  value={form.registrationDate ? new Date(`${form.registrationDate}T00:00:00`) : new Date()}
+                  value={isoToDate(form.registrationDate) ?? new Date()}
                   mode="date"
                   display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                   maximumDate={new Date()}
@@ -279,6 +223,7 @@ export function GSTDetailsScreen({ navigation }: Props) {
             </FormSectionCard>
 
             <FormSectionCard title="GST Certificate">
+              {errors.certificateUrl ? <Text style={styles.errorText}>{errors.certificateUrl}</Text> : null}
               {form.certificateUrl ? (
                 <FileCard
                   fileName={filenameFromUrl(form.certificateUrl)}
@@ -356,14 +301,6 @@ const styles = StyleSheet.create({
   },
   required: {
     color: colors.error,
-  },
-  inlineRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    alignItems: 'flex-start',
-  },
-  inlineInput: {
-    flex: 1,
   },
   verifiedRow: {
     flexDirection: 'row',

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { useProfile } from '../../context/ProfileContext';
@@ -7,6 +7,7 @@ import { useOrders } from '../../context/OrdersContext';
 import { useNotifications } from '../../context/NotificationsContext';
 import { useVendorAuth } from '../../context/VendorAuthContext';
 import { NavHeader, ScreenContainer } from '../../components';
+import { getApiErrorMessage } from '../../services/api';
 import { Icon } from '../../icons/Icon';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
@@ -19,17 +20,18 @@ export function SecurityLogoutScreen({ navigation }: Props) {
   const { logout } = useVendorAuth();
   const [signingOut, setSigningOut] = useState(false);
 
-  const pendingOrdersCount = ordersByStatus(['new']).length;
+  const pendingOrdersCount = ordersByStatus(['placed']).length;
   const hasSummaryRows = pendingOrdersCount > 0 || unreadCount > 0;
 
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
     try {
-      // Clears stored tokens and best-effort revokes the refresh token server-side.
+      // logout() clears tokens + every data context and resets navigation to Login.
       await logout();
-    } finally {
-      navigation.reset({ index: 0, routes: [{ name: 'SecurityLogoutConfirmation' }] });
+    } catch (err) {
+      setSigningOut(false);
+      Alert.alert('Could not sign out', getApiErrorMessage(err, 'Please try again.'));
     }
   }
 
@@ -48,7 +50,7 @@ export function SecurityLogoutScreen({ navigation }: Props) {
         <Text style={styles.heading}>Sign out of Verdant Vendor?</Text>
 
         <Text style={styles.subtitle}>
-          You&apos;re currently signed in as <Text style={styles.subtitleBold}>{profile.owner.name}</Text> on
+          You&apos;re currently signed in as <Text style={styles.subtitleBold}>{profile.owner.name || profile.owner.phone}</Text> on
           this device.
         </Text>
 

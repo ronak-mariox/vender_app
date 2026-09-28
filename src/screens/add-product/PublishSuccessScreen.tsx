@@ -1,36 +1,49 @@
-import React from 'react';
-import { StatusBar, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { BackHandler, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { packSizeLabel, useProductDraft, usesVariantPricing } from '../../context/ProductDraftContext';
 import { colors, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PublishSuccess'>;
 
 const TIMELINE = [
-  { step: 1, title: 'Category team reviews', meta: 'Within 24 hours' },
+  { step: 1, title: 'Admin team reviews', meta: 'You will be notified' },
   { step: 2, title: 'Product goes Active', meta: 'After approval' },
-  { step: 3, title: 'Customers can order', meta: 'Immediately after' },
+  { step: 3, title: 'Customers can order', meta: 'Once active' },
 ];
 
 export function PublishSuccessScreen({ navigation }: Props) {
   const { draft, effectivePricing, resetDraft } = useProductDraft();
   const basicInfo = draft.basicInfo;
-  const packSize = draft.packSize ? `${draft.packSize.netWeight}${draft.packSize.unit.split(' ')[0]}` : '—';
+  const packSize = usesVariantPricing(draft.packSize)
+    ? `${draft.packSize?.variants.length ?? 0} variants`
+    : packSizeLabel(draft.packSize) || '—';
 
   function handleAddAnother() {
     resetDraft();
-    navigation.replace('AddProduct');
+    navigation.popTo('AddProduct');
   }
 
   function handleViewProducts() {
     resetDraft();
-    navigation.reset({ index: 0, routes: [{ name: 'ProductCatalog' }] });
+    navigation.popToTop();
+    navigation.navigate('ProductCatalog');
   }
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleViewProducts();
+      return true;
+    });
+    return () => subscription.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <View style={styles.root}>
@@ -50,18 +63,21 @@ export function PublishSuccessScreen({ navigation }: Props) {
             <View style={styles.checkCircle}>
               <Icon name="check" size={44} color={colors.white} strokeWidth={3} />
             </View>
-            <Text style={styles.heading}>Product Published!</Text>
+            <Text style={styles.heading}>Product Submitted!</Text>
             <Text style={styles.subtitle}>
-              {basicInfo?.name || 'Your product'} is now live on Verdant and pending category review.
+              {basicInfo?.name || 'Your product'} has been submitted and is pending admin review.
             </Text>
 
             <View style={styles.productCard}>
-              <View style={styles.productIcon}>
-                <Icon name="package" size={22} color={colors.white} />
-              </View>
+              <ProductThumb
+                imageUrl={draft.images.images[0]}
+                style={styles.productIcon}
+                iconSize={22}
+                iconColor={colors.white}
+              />
               <View style={styles.productTextColumn}>
                 <Text style={styles.productName} numberOfLines={1}>
-                  {basicInfo?.name || 'Untitled Product'}
+                  {basicInfo?.name || '—'}
                 </Text>
                 <Text style={styles.productMeta}>
                   {packSize} · ₹{effectivePricing?.sellingPrice || 0} · SKU: {draft.identifiers?.sku || '—'}

@@ -6,25 +6,37 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import {
+  GST_ON_FEE_PERCENT_LABEL,
+  GST_ON_FEE_RATE,
+  PLATFORM_FEE_PERCENT_LABEL,
+  PLATFORM_FEE_RATE,
+} from '../../constants/fees';
 import { colors, radii, spacing, typography } from '../../theme';
 import { PricingBackHeader } from './PricingBackHeader';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductPricingDetail'>;
-
-const PLATFORM_FEE_RATE = 0.08;
 
 export function ProductPricingDetailScreen({ navigation, route }: Props) {
   const { productId } = route.params;
   const { products } = useProductCatalog();
   const product = products.find(item => item.id === productId);
-  if (!product) return null;
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <PricingBackHeader title="Product Pricing" onBack={() => navigation.goBack()} />
+      </SafeAreaView>
+    );
+  }
 
+  const variants = product.variants ?? [];
+  const multiVariant = variants.length > 1;
+  const isLive = product.status === 'active' || product.status === 'low-stock' || product.status === 'out-of-stock';
   const discountPct = product.mrp > 0 ? ((product.mrp - product.sellingPrice) / product.mrp) * 100 : 0;
-  const grossMargin = product.mrp - product.sellingPrice;
-  const grossPct = product.mrp > 0 ? (grossMargin / product.mrp) * 100 : 0;
   const platformFee = product.sellingPrice * PLATFORM_FEE_RATE;
-  const netMargin = grossMargin - platformFee;
-  const netPct = product.mrp > 0 ? (netMargin / product.mrp) * 100 : 0;
+  const gstOnFee = platformFee * GST_ON_FEE_RATE;
+  const payout = product.sellingPrice - platformFee - gstOnFee;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -32,24 +44,27 @@ export function ProductPricingDetailScreen({ navigation, route }: Props) {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.summaryCard}>
-          <View style={styles.thumb}>
-            <Icon name="package" size={22} color={colors.textTertiary} />
-          </View>
+          <ProductThumb
+            imageUrl={product.images?.[0]}
+            style={styles.thumb}
+            iconSize={22}
+            iconColor={colors.textTertiary}
+          />
           <View style={styles.summaryTextColumn}>
             <Text style={styles.summaryName} numberOfLines={2}>
               {product.name}
             </Text>
-            <Text style={styles.summarySku}>SKU: {product.sku}</Text>
+            <Text style={styles.summarySku}>SKU: {product.sku || '—'}</Text>
           </View>
-          <View style={[styles.statusPill, product.status !== 'active' && styles.statusPillMuted]}>
-            <Text style={[styles.statusPillText, product.status !== 'active' && styles.statusPillTextMuted]}>
-              {product.status === 'active' ? 'Active' : 'Inactive'}
+          <View style={[styles.statusPill, !isLive && styles.statusPillMuted]}>
+            <Text style={[styles.statusPillText, !isLive && styles.statusPillTextMuted]}>
+              {isLive ? 'Active' : product.status === 'pending' ? 'Pending' : product.status === 'rejected' ? 'Rejected' : 'Inactive'}
             </Text>
           </View>
         </View>
 
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionLabel}>Price Breakdown</Text>
+          <Text style={styles.sectionLabel}>{multiVariant ? 'Primary Variant Price' : 'Price Breakdown'}</Text>
           <Pressable onPress={() => navigation.navigate('PricingCombinedEdit', { productId })} hitSlop={8}>
             <Text style={styles.editLink}>Edit</Text>
           </Pressable>
@@ -74,19 +89,43 @@ export function ProductPricingDetailScreen({ navigation, route }: Props) {
           />
         </View>
 
+        {multiVariant ? (
+          <>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionLabel}>All Variants</Text>
+              <Pressable onPress={() => navigation.navigate('EditPrice', { productId })} hitSlop={8}>
+                <Text style={styles.editLink}>Edit all</Text>
+              </Pressable>
+            </View>
+            <View style={styles.card}>
+              {variants.map((variant, index) => (
+                <FieldRow
+                  key={variant.id}
+                  label={`${variant.size}${variant.isPrimary ? ' (primary)' : ''}`}
+                  value={`₹${variant.sellingPrice} · MRP ₹${variant.mrp}`}
+                  last={index === variants.length - 1}
+                  onPress={() => navigation.navigate('EditPrice', { productId })}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
+
         <View style={styles.marginCard}>
-          <Text style={styles.marginTitle}>Margin Analysis</Text>
+          <Text style={styles.marginTitle}>Your Payout Estimate{multiVariant ? ' (primary variant)' : ''}</Text>
           <View style={styles.marginRow}>
-            <Text style={styles.marginLabel}>Gross Margin</Text>
-            <Text style={styles.marginValue}>
-              ₹{grossMargin.toFixed(2)} ({grossPct.toFixed(1)}%)
-            </Text>
+            <Text style={styles.marginLabel}>Customer saves vs MRP</Text>
+            <Text style={styles.marginValue}>₹{Math.max(0, product.mrp - product.sellingPrice).toFixed(2)}</Text>
           </View>
           <View style={styles.marginRow}>
-            <Text style={styles.marginLabel}>Net Margin (after platform fee)</Text>
-            <Text style={styles.marginValue}>
-              ₹{netMargin.toFixed(2)} ({netPct.toFixed(1)}%)
+            <Text style={styles.marginLabel}>
+              Platform fee ({PLATFORM_FEE_PERCENT_LABEL}) + GST ({GST_ON_FEE_PERCENT_LABEL})
             </Text>
+            <Text style={styles.marginValue}>−₹{(platformFee + gstOnFee).toFixed(2)}</Text>
+          </View>
+          <View style={styles.marginRow}>
+            <Text style={styles.marginLabel}>Payout per unit</Text>
+            <Text style={styles.marginValue}>₹{payout.toFixed(2)}</Text>
           </View>
         </View>
       </ScrollView>

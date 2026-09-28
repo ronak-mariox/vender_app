@@ -1,35 +1,50 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
+import { InfoBanner } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useOrders } from '../../context/OrdersContext';
+import { ORDER_STATUS_META, VENDOR_CANCELLABLE_STATUSES } from '../../context/OrdersContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 import { FlexButton } from './FlexButton';
-import { findFlaggedItem } from './flowMock';
+import { formatMoney, openOrder, useOrder, useOrderAction } from '../orders/orderHelpers';
+import { OrderLoadState } from '../orders/OrderLoadState';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductPicking'>;
 
 export function ProductPickingScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const { getOrder, startQualityCheck } = useOrders();
-  const order = getOrder(orderId);
-  if (!order) return null;
+  const { order, loading, error, retry } = useOrder(orderId);
+  const { perform, busy } = useOrderAction(navigation);
+  // Local-only packing aid; the backend has no per-item picking state.
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
 
-  const flagged = findFlaggedItem(order.products);
-  const flaggedIndex = flagged ? order.products.indexOf(flagged) : -1;
-  const checkedCount = flaggedIndex >= 0 ? flaggedIndex + 1 : order.products.length;
+  if (!order) {
+    return (
+      <OrderLoadState
+        title="Prepare Order"
+        loading={loading}
+        error={error}
+        onBack={() => navigation.goBack()}
+        onRetry={retry}
+      />
+    );
+  }
+
+  const keyOf = (index: number) => `${order.products[index].productId}-${order.products[index].variantId}-${index}`;
   const total = order.products.length;
-  const pct = total > 0 ? Math.min(100, Math.round((checkedCount / total) * 100)) : 0;
+  const checkedCount = order.products.filter((_, index) => picked[keyOf(index)]).length;
+  const pct = total > 0 ? Math.round((checkedCount / total) * 100) : 0;
+  const isAccepted = order.status === 'accepted';
+  const isPreparing = order.status === 'preparing';
+  const canCancel = VENDOR_CANCELLABLE_STATUSES.includes(order.status);
+  const allPicked = total > 0 && checkedCount === total;
 
-  function handleContinue() {
-    if (flagged) {
-      navigation.navigate('ItemAvailability', { orderId });
-    } else {
-      startQualityCheck(orderId);
-      navigation.replace('QualityCheckFlow', { orderId });
-    }
+  function toggle(index: number) {
+    if (!isPreparing) return;
+    const key = keyOf(index);
+    setPicked(prev => ({ ...prev, [key]: !prev[key] }));
   }
 
   return (
@@ -40,14 +55,21 @@ export function ProductPickingScreen({ navigation, route }: Props) {
             <Icon name="arrow-left" size={18} color={colors.textPrimary} />
           </Pressable>
           <View style={styles.textColumn}>
-            <Text style={styles.title}>Pick Items</Text>
+            <Text style={styles.title}>{isAccepted ? 'Order Accepted' : 'Prepare Order'}</Text>
             <Text style={styles.subtitle}>
-              {order.id} · {checkedCount} of {total} items checked
+              {order.orderNumber} · {checkedCount} of {total} items picked
             </Text>
           </View>
-          <Pressable hitSlop={8} style={styles.iconButton}>
-            <Icon name="barcode" size={16} color={colors.textPrimary} />
-          </Pressable>
+          {canCancel ? (
+            <Pressable
+              hitSlop={8}
+              style={styles.iconButton}
+              onPress={() => navigation.navigate('VendorCancelOrder', { orderId })}
+              accessibilityLabel="Cancel order"
+            >
+              <Icon name="x-circle" size={16} color={colors.error} />
+            </Pressable>
+          ) : null}
         </View>
         <View style={styles.progressLabelRow}>
           <Text style={styles.progressLabel}>Picking progress</Text>
@@ -61,54 +83,82 @@ export function ProductPickingScreen({ navigation, route }: Props) {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {isAccepted ? (
+          <InfoBanner variant="info" message="Tap “Start Preparing” when you begin packing this order." bordered />
+        ) : null}
+        {!isAccepted && !isPreparing ? (
+          <InfoBanner
+            variant="warning"
+            message={`This order is now "${ORDER_STATUS_META[order.status].label}".`}
+            bordered
+          />
+        ) : null}
+        {order.specialInstructions ? (
+          <InfoBanner variant="warning" message={`Note: ${order.specialInstructions}`} bordered />
+        ) : null}
+
         <View style={styles.listCard}>
           {order.products.map((product, index) => {
-            const isFlagged = index === flaggedIndex;
-            const isPicked = flaggedIndex >= 0 ? index < flaggedIndex : true;
+            const isPicked = !!picked[keyOf(index)];
             return (
-              <View
-                key={`${product.name}-${index}`}
-                style={[styles.row, isPicked && styles.rowPicked, isFlagged && styles.rowMissing]}
+              <Pressable
+                key={keyOf(index)}
+                onPress={() => toggle(index)}
+                disabled={!isPreparing}
+                style={[styles.row, isPicked && styles.rowPicked]}
               >
-                <View
-                  style={[
-                    styles.checkbox,
-                    isPicked && styles.checkboxPicked,
-                    isFlagged && styles.checkboxMissing,
-                  ]}
-                >
+                <View style={[styles.checkbox, isPicked && styles.checkboxPicked]}>
                   {isPicked ? <Icon name="check" size={14} color={colors.primary} strokeWidth={3} /> : null}
-                  {isFlagged ? <Icon name="x" size={14} color={colors.error} strokeWidth={3} /> : null}
                 </View>
                 <View style={styles.textColumn}>
-                  <Text style={[styles.name, isFlagged && styles.nameMissing]} numberOfLines={1}>
+                  <Text style={styles.name} numberOfLines={1}>
                     {product.name}
                   </Text>
-                  <Text style={styles.meta}>Qty: {product.qty} · Aisle 3, Shelf B</Text>
+                  <Text style={styles.meta}>
+                    Qty: {product.qty}
+                    {product.variantLabel ? ` · ${product.variantLabel}` : ''}
+                  </Text>
                 </View>
                 <View style={styles.priceColumn}>
-                  <Text style={styles.price}>₹{product.price * product.qty}</Text>
-                  {isFlagged ? <Text style={styles.notFound}>Not found</Text> : null}
+                  <Text style={styles.price}>{formatMoney(product.subtotal)}</Text>
                 </View>
-              </View>
+              </Pressable>
             );
           })}
-
-          <View style={styles.scanRow}>
-            <Icon name="barcode" size={14} color={colors.textSecondary} />
-            <Text style={styles.scanText}>Scan barcode to mark item as picked</Text>
-          </View>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <FlexButton
-          label={flagged ? 'Continue — 1 item issue →' : 'Continue →'}
-          onPress={handleContinue}
-          background={flagged ? colors.warning : colors.primary}
-          textColor={colors.white}
-          flex={1}
-        />
+        {isAccepted ? (
+          <FlexButton
+            label={busy ? 'Updating…' : 'Start Preparing →'}
+            onPress={() => perform('preparing', orderId)}
+            background={colors.primary}
+            textColor={colors.white}
+            flex={1}
+            disabled={busy}
+          />
+        ) : isPreparing ? (
+          <FlexButton
+            label={busy ? 'Updating…' : allPicked ? 'Mark Ready for Pickup →' : 'Pick all items to continue'}
+            onPress={() => perform('ready', orderId)}
+            background={allPicked ? colors.primary : colors.textTertiary}
+            textColor={colors.white}
+            flex={1}
+            disabled={busy || !allPicked}
+          />
+        ) : (
+          <FlexButton
+            label="View Order"
+            onPress={() => {
+              navigation.goBack();
+              openOrder(navigation, order);
+            }}
+            background={colors.primary}
+            textColor={colors.white}
+            flex={1}
+          />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -200,9 +250,6 @@ const styles = StyleSheet.create({
   rowPicked: {
     backgroundColor: '#F0FDF4',
   },
-  rowMissing: {
-    backgroundColor: colors.errorSurface,
-  },
   checkbox: {
     width: 28,
     height: 28,
@@ -217,10 +264,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySurface,
     borderColor: colors.primary,
   },
-  checkboxMissing: {
-    backgroundColor: '#FEE2E2',
-    borderColor: colors.errorBorder,
-  },
   textColumn: {
     flex: 1,
     gap: 1,
@@ -228,10 +271,6 @@ const styles = StyleSheet.create({
   name: {
     ...typography.labelSemibold,
     color: colors.textPrimary,
-  },
-  nameMissing: {
-    color: colors.error,
-    textDecorationLine: 'line-through',
   },
   meta: {
     ...typography.tiny,
@@ -246,26 +285,8 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
     color: colors.textPrimary,
   },
-  notFound: {
-    fontSize: 10,
-    lineHeight: 15,
-    fontFamily: fontFamilies.semibold,
-    color: colors.error,
-  },
-  scanRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.xxl,
-    paddingVertical: spacing.lg,
-  },
-  scanText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
   footer: {
+    flexDirection: 'row',
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.white,

@@ -10,8 +10,8 @@ import { FlexButton } from './FlexButton';
 type Props = NativeStackScreenProps<AuthStackParamList, 'PreparingOrders'>;
 
 export function PreparingOrdersScreen({ navigation }: Props) {
-  const { ordersByStatus, startQualityCheck } = useOrders();
-  const preparingOrders = ordersByStatus(['preparing']);
+  const { ordersByStatus } = useOrders();
+  const preparingOrders = ordersByStatus(['accepted', 'preparing']);
 
   return (
     <OrderActionLayout
@@ -20,8 +20,9 @@ export function PreparingOrdersScreen({ navigation }: Props) {
       pill={{ label: `${preparingOrders.length} active`, color: colors.warningDark, background: colors.warningSurface }}
       banner={{
         variant: 'warning',
-        message: 'Pick items and complete quality check before marking ready.',
+        message: 'Pick and pack all items, then mark the order ready for pickup.',
       }}
+      emptyMessage="No orders being prepared"
       orders={preparingOrders}
       onOrderPress={orderId => navigation.navigate('OrderDetails', { orderId })}
       renderOrderExtra={order => (
@@ -35,9 +36,9 @@ export function PreparingOrdersScreen({ navigation }: Props) {
             flex={1}
           />
           <FlexButton
-            label="Start QC →"
-            onPress={() => startQualityCheck(order.id)}
-            background="#7C3AED"
+            label={order.status === 'accepted' ? 'Start Preparing →' : 'Continue Packing →'}
+            onPress={() => navigation.navigate('ProductPicking', { orderId: order.id })}
+            background={colors.primary}
             textColor={colors.white}
             flex={1}
           />

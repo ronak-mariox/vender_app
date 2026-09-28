@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { InventoryRow } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { useInventoryRefresh } from './useInventoryRefresh';
 import { isInventoryCategory } from '../../utils/inventory';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -13,6 +14,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'OutOfStock'>;
 
 export function OutOfStockScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
+  const { refreshing, onRefresh } = useInventoryRefresh();
   const outOfStockProducts = useMemo(
     () => products.filter(product => isInventoryCategory(product, 'out-of-stock')),
     [products],
@@ -26,28 +28,30 @@ export function OutOfStockScreen({ navigation }: Props) {
         </Pressable>
         <View style={styles.headerTextColumn}>
           <Text style={styles.headerTitle}>Out of Stock</Text>
-          <Text style={styles.headerSubtitle}>{outOfStockProducts.length} products unavailable to customers</Text>
+          <Text style={styles.headerSubtitle}>{outOfStockProducts.length} products can't be ordered</Text>
         </View>
       </View>
 
       <View style={styles.errorBanner}>
         <Icon name="alert-circle" size={15} color={colors.error} />
-        <Text style={styles.errorText}>These products are hidden from customers. Add stock to start receiving orders.</Text>
+        <Text style={styles.errorText}>Customers can't order these products until you add stock.</Text>
       </View>
 
       <FlatList
         data={outOfStockProducts}
         keyExtractor={item => item.id}
         style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item }) => (
           <InventoryRow
             name={item.name}
+            imageUrl={item.images?.[0]}
             sku={item.sku}
             onPress={() => navigation.navigate('ProductStockDetails', { productId: item.id })}
             subtitle={
               <View style={styles.statusRow}>
                 <View style={styles.statusDot} />
-                <Text style={styles.statusText}>Out of Stock · Hidden</Text>
+                <Text style={styles.statusText}>Out of Stock · Can't be ordered</Text>
               </View>
             }
             right={

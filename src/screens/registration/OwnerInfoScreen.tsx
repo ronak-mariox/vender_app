@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -6,27 +6,16 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, FormSectionCard, Input, NavHeader, ProgressSteps, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration, type OwnerInfoData } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage, getFieldErrors } from '../../services/api';
-import { isAdult, isRequired, isValidPAN, type FormErrors } from '../../utils/validators';
+import { useVendorAuth } from '../../context/VendorAuthContext';
+import { api } from '../../services/api';
+import { formatDisplayDate, handleRegistrationSaveError, isoToDate, toIsoDate } from './registrationHelpers';
+import { isAdult, isRequired, isValidEmail, isValidPAN, type FormErrors } from '../../utils/validators';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OwnerInfo'>;
 
-type Errors = FormErrors<'fullName' | 'dob' | 'pan'>;
-
-function toIsoDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function formatDisplayDate(iso: string): string {
-  if (!iso) return '';
-  const date = new Date(`${iso}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-}
+const FIELDS = ['fullName', 'mobile', 'email', 'dob', 'pan'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
 function VerifiedPill() {
   return (
@@ -39,9 +28,26 @@ function VerifiedPill() {
 
 export function OwnerInfoScreen({ navigation }: Props) {
   const { data, updateOwnerInfo } = useRegistration();
+  const { vendor } = useVendorAuth();
   const [form, setForm] = useState<OwnerInfoData>(
     data.ownerInfo ?? { fullName: '', mobile: '', email: '', dob: '', pan: '' },
   );
+
+  useEffect(() => {
+    if (data.ownerInfo) setForm(data.ownerInfo);
+  }, [data.ownerInfo]);
+
+  // Mobile/email are account-level (verified at sign-up); fall back to the
+  // signed-in vendor's profile when the registration copy doesn't have them yet.
+  useEffect(() => {
+    if (!vendor) return;
+    setForm(prev => ({
+      ...prev,
+      fullName: prev.fullName || vendor.fullName || '',
+      mobile: prev.mobile || vendor.phone || '',
+      email: prev.email || vendor.email || '',
+    }));
+  }, [vendor]);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -69,6 +75,8 @@ export function OwnerInfoScreen({ navigation }: Props) {
     if (!isRequired(form.fullName)) nextErrors.fullName = 'Enter the owner full name';
     if (!isRequired(form.dob)) nextErrors.dob = 'Select the date of birth';
     else if (!isAdult(form.dob)) nextErrors.dob = 'You must be at least 18 years old';
+    if (!isRequired(form.mobile)) nextErrors.mobile = 'Mobile number is missing from your account';
+    if (!isValidEmail(form.email)) nextErrors.email = 'A valid email is missing from your account';
     if (!isValidPAN(form.pan)) nextErrors.pan = 'Invalid PAN format. Format: AAAAA9999A (e.g. ABCDE1234F)';
 
     setErrors(nextErrors);
@@ -81,17 +89,12 @@ export function OwnerInfoScreen({ navigation }: Props) {
         mobile: form.mobile,
         email: form.email,
         dob: form.dob,
-        pan: form.pan,
+        pan: form.pan.trim().toUpperCase(),
       });
       updateOwnerInfo(form);
       navigation.navigate('StoreInfo');
     } catch (err) {
-      const fieldErrors = getFieldErrors(err);
-      if (Object.keys(fieldErrors).length > 0) {
-        setErrors(fieldErrors as Errors);
-      } else {
-        setErrors({ form: getApiErrorMessage(err, 'Could not save your details. Please try again.') });
-      }
+      handleRegistrationSaveError<Errors>(err, setErrors, 'Could not save your details. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -117,7 +120,7 @@ export function OwnerInfoScreen({ navigation }: Props) {
             leftIcon="user"
             value={form.fullName}
             onChangeText={text => set('fullName', text)}
-            placeholder="Priya Sharma"
+            placeholder="Full name"
             autoCapitalize="words"
             helperText="As per government-issued ID"
             error={errors.fullName}
@@ -130,15 +133,18 @@ export function OwnerInfoScreen({ navigation }: Props) {
             onChangeText={() => undefined}
             editable={false}
             rightElement={<VerifiedPill />}
+            error={errors.mobile}
           />
           <Input
             label="Email Address"
             required
             leftIcon="mail"
             value={form.email}
-            onChangeText={() => undefined}
-            editable={false}
-            rightElement={<VerifiedPill />}
+            onChangeText={text => set('email', text.trim())}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            error={errors.email}
           />
           <View style={styles.dobField}>
             <View style={styles.labelRow}>
@@ -162,7 +168,7 @@ export function OwnerInfoScreen({ navigation }: Props) {
           </View>
           {showDatePicker ? (
             <DateTimePicker
-              value={form.dob ? new Date(`${form.dob}T00:00:00`) : maxDob}
+              value={isoToDate(form.dob) ?? maxDob}
               mode="date"
               display={Platform.OS === 'ios' ? 'spinner' : 'default'}
               maximumDate={maxDob}

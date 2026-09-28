@@ -1,100 +1,100 @@
-import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { InfoBanner } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useOrders } from '../../context/OrdersContext';
+import { ORDER_STATUS_META } from '../../context/OrdersContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 import { FlexButton } from './FlexButton';
+import { formatMoney, openOrder, placedTime, useOrder, useOrderAction } from '../orders/orderHelpers';
+import { OrderLoadState } from '../orders/OrderLoadState';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'NewOrderReceived'>;
 
-function formatCountdown(seconds: number) {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${String(secs).padStart(2, '0')}`;
-}
-
 export function NewOrderReceivedScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const { getOrder } = useOrders();
-  const order = getOrder(orderId);
-  const [secondsLeft, setSecondsLeft] = useState(272);
+  const { order, loading, error, retry } = useOrder(orderId);
+  const { perform, busy } = useOrderAction(navigation);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setSecondsLeft(value => Math.max(0, value - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+  if (!order) {
+    return (
+      <OrderLoadState
+        title="New Order"
+        loading={loading}
+        error={error}
+        onBack={() => navigation.goBack()}
+        onRetry={retry}
+      />
+    );
+  }
 
-  if (!order) return null;
+  const stillNew = order.status === 'placed';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.banner}>
-        <View style={styles.bannerIcon}>
-          <Icon name="shopping-cart" size={22} color={colors.white} />
-        </View>
+        <Pressable onPress={() => navigation.goBack()} hitSlop={8} style={styles.bannerIcon}>
+          <Icon name="arrow-left" size={20} color={colors.white} />
+        </Pressable>
         <View style={styles.bannerTextColumn}>
-          <Text style={styles.bannerTitle}>New Order Received!</Text>
+          <Text style={styles.bannerTitle}>{stillNew ? 'New Order Received!' : 'Order Updated'}</Text>
           <Text style={styles.bannerSubtitle}>
-            {order.id} · {order.itemsCount} items · ₹{order.amount}
+            {order.orderNumber} · {order.itemsCount} items · {formatMoney(order.amount)}
           </Text>
-        </View>
-        <View style={styles.countdownPill}>
-          <Text style={styles.countdownValue}>{formatCountdown(secondsLeft)}</Text>
-          <Text style={styles.countdownLabel}>ACCEPT BY</Text>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {!stillNew ? (
+          <InfoBanner
+            variant="warning"
+            message={`This order is now "${ORDER_STATUS_META[order.status].label}" and can no longer be accepted or rejected here.`}
+            bordered
+          />
+        ) : null}
+
         <View style={styles.card}>
           <View style={styles.orderTopRow}>
             <View>
-              <Text style={styles.orderId}>ORD-2026-{order.id.replace('ORD-', '')}</Text>
+              <Text style={styles.orderId}>{order.orderNumber}</Text>
               <Text style={styles.orderMeta}>
-                {order.timeLabel} · {order.paymentMethod}
+                {placedTime(order)} · {order.paymentMethod}
               </Text>
             </View>
-            <Text style={styles.orderAmount}>₹{order.amount}</Text>
+            <Text style={styles.orderAmount}>{formatMoney(order.amount)}</Text>
           </View>
 
           <View style={styles.customerRow}>
             <Icon name="user" size={16} color={colors.textSecondary} />
             <View style={styles.customerTextColumn}>
               <Text style={styles.customerName}>{order.customerName}</Text>
-              <Text style={styles.customerMeta}>
-                {order.location} · {order.distanceLabel ?? '3.0 km away'}
-              </Text>
+              {order.location ? <Text style={styles.customerMeta}>{order.location}</Text> : null}
             </View>
-            <Text style={styles.loyaltyText}>{order.loyaltyLabel ?? 'New Customer'}</Text>
           </View>
-
-          <InfoBanner
-            variant="info"
-            message={`Expected delivery by 12:00 PM (1h 26min)`}
-            bordered
-          />
         </View>
 
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>Items ({order.products.length})</Text>
           {order.products.map((product, index) => (
             <View
-              key={`${product.name}-${index}`}
+              key={`${product.productId}-${product.variantId}`}
               style={[styles.itemRow, index < order.products.length - 1 && styles.itemRowDivider]}
             >
-              <View style={styles.itemIcon}>
-                <Icon name="package" size={14} color={colors.textSecondary} />
-              </View>
+              <ProductThumb
+                imageUrl={product.imageUrl}
+                style={styles.itemIcon}
+                iconSize={14}
+                iconColor={colors.textSecondary}
+              />
               <Text style={styles.itemName} numberOfLines={1}>
                 {product.name}
+                {product.variantLabel ? ` · ${product.variantLabel}` : ''}
               </Text>
               <Text style={styles.itemQty}>×{product.qty}</Text>
-              <Text style={styles.itemPrice}>₹{product.price * product.qty}</Text>
+              <Text style={styles.itemPrice}>{formatMoney(product.subtotal)}</Text>
             </View>
           ))}
         </View>
@@ -111,21 +111,38 @@ export function NewOrderReceivedScreen({ navigation, route }: Props) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <FlexButton
-          label="Reject"
-          onPress={() => navigation.navigate('RejectOrderWarning', { orderId })}
-          background={colors.errorSurface}
-          textColor={colors.error}
-          borderColor={colors.errorBorder}
-          flex={1}
-        />
-        <FlexButton
-          label="Accept Order →"
-          onPress={() => navigation.navigate('AcceptOrderConfirm', { orderId })}
-          background={colors.primary}
-          textColor={colors.white}
-          flex={1.9}
-        />
+        {stillNew ? (
+          <>
+            <FlexButton
+              label="Reject"
+              onPress={() => navigation.navigate('RejectReason', { orderId })}
+              background={colors.errorSurface}
+              textColor={colors.error}
+              borderColor={colors.errorBorder}
+              flex={1}
+              disabled={busy}
+            />
+            <FlexButton
+              label={busy ? 'Accepting…' : 'Accept Order →'}
+              onPress={() => perform('accept', orderId)}
+              background={colors.primary}
+              textColor={colors.white}
+              flex={1.9}
+              disabled={busy}
+            />
+          </>
+        ) : (
+          <FlexButton
+            label="View Order"
+            onPress={() => {
+              navigation.goBack();
+              openOrder(navigation, order);
+            }}
+            background={colors.primary}
+            textColor={colors.white}
+            flex={1}
+          />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -164,25 +181,6 @@ const styles = StyleSheet.create({
   bannerSubtitle: {
     ...typography.caption,
     color: 'rgba(255,255,255,0.8)',
-  },
-  countdownPill: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    alignItems: 'center',
-  },
-  countdownValue: {
-    fontSize: 18,
-    fontFamily: fontFamilies.black,
-    color: colors.white,
-  },
-  countdownLabel: {
-    fontSize: 9,
-    fontFamily: fontFamilies.semibold,
-    color: 'rgba(255,255,255,0.7)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   content: {
     padding: spacing.xl,
@@ -235,10 +233,6 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   customerMeta: {
-    ...typography.tiny,
-    color: colors.textSecondary,
-  },
-  loyaltyText: {
     ...typography.tiny,
     color: colors.textSecondary,
   },

@@ -1,61 +1,83 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { colors } from '../theme';
 import { IconName } from '../icons/Icon';
-import { api } from '../services/api';
+import { api, getApiErrorMessage, unwrapList } from '../services/api';
 import { formatTimeAgo } from '../utils/time';
+import { useVendorAuth } from './VendorAuthContext';
+import { currentRoute, navigationRef } from '../navigation/navigationRef';
 
 export type OrderStatus =
-  | 'new'
+  | 'placed'
+  | 'accepted'
   | 'preparing'
-  | 'quality-check'
-  | 'packing'
-  | 'ready-for-dispatch'
-  | 'dispatched'
-  | 'completed'
+  | 'ready_for_pickup'
+  | 'out_for_delivery'
+  | 'delivered'
   | 'cancelled'
-  | 'failed';
+  | 'rejected';
 
 export type OrderProduct = {
+  productId: string;
+  variantId: string;
   name: string;
+  variantLabel: string;
+  imageUrl?: string;
   price: number;
+  mrp: number;
   qty: number;
+  subtotal: number;
 };
 
-export type DeliveryPartner = {
-  name: string;
-  vehicle: string;
-  plate: string;
+export type OrderDriver = {
+  id: string;
+  name?: string;
+  phone?: string;
+  vehicle?: string;
+  plate?: string;
 };
 
 export type OrderStatusEvent = {
   status: OrderStatus;
-  time: string;
+  at: string;
+  note?: string;
 };
 
 export type Order = {
+  /** Mongo id — use for every API call and navigation param. */
   id: string;
+  /** Human-readable order number — display only. */
+  orderNumber: string;
   customerName: string;
   customerPhone: string;
   itemsCount: number;
   location: string;
   addressLine1: string;
   addressLine2: string;
+  contactName?: string;
+  contactPhone?: string;
+  placedAt: string;
   timeLabel: string;
   amount: number;
+  itemsTotal: number;
+  taxTotal: number;
   deliveryCharge: number;
+  platformFee: number;
+  discount: number;
   paymentMethod: string;
+  paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
   status: OrderStatus;
   products: OrderProduct[];
   specialInstructions?: string;
-  deliveryPartner?: DeliveryPartner;
+  driverId?: string;
+  driver?: OrderDriver;
   cancelReason?: string;
-  failReason?: string;
+  cancelledBy?: 'customer' | 'vendor' | 'admin' | 'driver';
   rating?: number;
   review?: string;
   statusHistory: OrderStatusEvent[];
-  distanceLabel?: string;
-  loyaltyLabel?: string;
-  cancelledBy?: 'customer' | 'vendor';
+  deliveredAt?: string;
+  updatedAt: string;
 };
 
 export type OrderStatusMeta = {
@@ -66,30 +88,25 @@ export type OrderStatusMeta = {
 };
 
 export const ORDER_STATUS_META: Record<OrderStatus, OrderStatusMeta> = {
-  new: { label: 'New Order', color: '#1570EF', background: '#EFF8FF', icon: 'shopping-cart' },
-  preparing: { label: 'Preparing', color: colors.warningDark, background: colors.warningSurface, icon: 'package' },
-  'quality-check': { label: 'Quality Check', color: '#7C3AED', background: '#F5F3FF', icon: 'check-circle' },
-  packing: { label: 'Packing', color: '#EA580C', background: '#FFF7ED', icon: 'layers' },
-  'ready-for-dispatch': { label: 'Ready to Dispatch', color: '#0891B2', background: '#ECFEFF', icon: 'truck' },
-  dispatched: { label: 'Dispatched', color: '#4338CA', background: '#EEF2FF', icon: 'truck' },
-  completed: { label: 'Completed', color: colors.primary, background: colors.primarySurface, icon: 'check-circle' },
+  placed: { label: 'New Order', color: '#1570EF', background: '#EFF8FF', icon: 'shopping-cart' },
+  accepted: { label: 'Accepted', color: colors.warningDark, background: colors.warningSurface, icon: 'check-circle' },
+  preparing: { label: 'Preparing', color: '#EA580C', background: '#FFF7ED', icon: 'package' },
+  ready_for_pickup: { label: 'Ready for Pickup', color: '#0891B2', background: '#ECFEFF', icon: 'truck' },
+  out_for_delivery: { label: 'Out for Delivery', color: '#4338CA', background: '#EEF2FF', icon: 'truck' },
+  delivered: { label: 'Delivered', color: colors.primary, background: colors.primarySurface, icon: 'check-circle' },
   cancelled: { label: 'Cancelled', color: colors.error, background: colors.errorSurface, icon: 'x-circle' },
-  failed: { label: 'Failed', color: '#374151', background: '#F3F4F6', icon: 'alert-circle' },
+  rejected: { label: 'Rejected', color: '#374151', background: '#F3F4F6', icon: 'x-circle' },
 };
+
+/** Statuses the vendor still has work to do on (or is waiting on a driver for). */
+export const ACTIVE_ORDER_STATUSES: OrderStatus[] = ['placed', 'accepted', 'preparing', 'ready_for_pickup', 'out_for_delivery'];
+
+/** Vendor-side transitions — mirrors backend `lib/orderStatus.ts`. */
+export const VENDOR_CANCELLABLE_STATUSES: OrderStatus[] = ['accepted', 'preparing', 'ready_for_pickup'];
 
 // ---------------------------------------------------------------------------
 // Backend (API) shapes
 // ---------------------------------------------------------------------------
-
-type ApiOrderStatus =
-  | 'placed'
-  | 'accepted'
-  | 'preparing'
-  | 'ready_for_pickup'
-  | 'out_for_delivery'
-  | 'delivered'
-  | 'cancelled'
-  | 'rejected';
 
 type ApiOrderItem = {
   productId: string;
@@ -123,280 +140,291 @@ type ApiOrderPricing = {
   grandTotal: number;
 };
 
+type ApiDriverSummary = {
+  id?: string;
+  name?: string;
+  fullName?: string;
+  phone?: string;
+  vehicleType?: string;
+  vehicleNumber?: string;
+};
+
+type ApiRating = number | { stars?: number; rating?: number; reviewText?: string; review?: string } | null;
+
 type ApiOrder = {
   id: string;
   orderNumber: string;
-  customerName: string;
+  customerName?: string;
   customerPhone?: string;
+  driverId?: string | null;
+  driver?: ApiDriverSummary | null;
   items: ApiOrderItem[];
   address: ApiOrderAddress;
   pricing: ApiOrderPricing;
   couponCode?: string;
   paymentMethod: 'cod' | 'online';
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
-  status: ApiOrderStatus;
-  statusHistory: { status: ApiOrderStatus; at: string; note?: string }[];
+  status: OrderStatus;
+  statusHistory: { status: OrderStatus; at: string; note?: string }[];
   specialInstructions?: string;
   cancelReason?: string;
-  cancelledBy?: 'customer' | 'vendor' | 'admin';
+  cancelledBy?: 'customer' | 'vendor' | 'admin' | 'driver';
   placedAt: string;
   deliveredAt?: string;
+  vendorRating?: number;
+  rating?: ApiRating;
   createdAt: string;
+  updatedAt: string;
 };
 
-/**
- * Local-only extras that have no backend representation in this pass: the interim
- * "Quality Check" UI step (no backend call happens for it — see `startQualityCheck`),
- * a post-delivery rating/review, and an item-substitution overlay for the (rare) replace/remove
- * item flow. None of this survives a refresh from the server; it's an in-memory convenience
- * layered on top of the real order data.
- */
-type OrderOverlay = {
-  qualityCheckStarted?: boolean;
-  productsOverride?: OrderProduct[];
-  rating?: number;
-  review?: string;
-};
-
-function mapHistoryStatus(status: ApiOrderStatus): OrderStatus {
-  switch (status) {
-    case 'placed':
-      return 'new';
-    case 'accepted':
-      return 'preparing';
-    case 'preparing':
-      return 'packing';
-    case 'ready_for_pickup':
-      return 'ready-for-dispatch';
-    case 'out_for_delivery':
-      return 'dispatched';
-    case 'delivered':
-      return 'completed';
-    case 'rejected':
-      return 'cancelled';
-    case 'cancelled':
-      return 'cancelled';
-    default:
-      return 'new';
-  }
-}
-
-function isFailedQualityCheck(order: ApiOrder): boolean {
-  if (order.status !== 'cancelled') return false;
-  const note = order.cancelReason ?? order.statusHistory[order.statusHistory.length - 1]?.note ?? '';
-  return /quality check/i.test(note);
-}
-
-function deriveStatus(order: ApiOrder, overlay?: OrderOverlay): OrderStatus {
-  if (order.status === 'accepted' && overlay?.qualityCheckStarted) return 'quality-check';
-  if (order.status === 'cancelled' && isFailedQualityCheck(order)) return 'failed';
-  return mapHistoryStatus(order.status);
-}
-
-function formatApiTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
-}
-
-function buildHistory(order: ApiOrder, overlay?: OrderOverlay): OrderStatusEvent[] {
-  const merged: OrderStatusEvent[] = [];
-  for (const entry of order.statusHistory) {
-    merged.push({ status: mapHistoryStatus(entry.status), time: formatApiTime(entry.at) });
-    if (entry.status === 'accepted' && overlay?.qualityCheckStarted) {
-      merged.push({ status: 'quality-check', time: formatApiTime(entry.at) });
-    }
-  }
-  return merged;
-}
-
-function mapCancelledBy(value: ApiOrder['cancelledBy']): 'customer' | 'vendor' | undefined {
-  if (value === 'customer') return 'customer';
-  if (value === 'vendor' || value === 'admin') return 'vendor';
-  return undefined;
-}
-
-function mapOrder(apiOrder: ApiOrder, overlay?: OrderOverlay): Order {
-  const products = overlay?.productsOverride ?? apiOrder.items.map(item => ({
-    name: item.name,
-    price: item.price,
-    qty: item.quantity,
-  }));
-  const itemsCount = products.reduce((sum, item) => sum + item.qty, 0);
-  const amount = overlay?.productsOverride
-    ? products.reduce((sum, item) => sum + item.price * item.qty, 0) + apiOrder.pricing.deliveryFee
-    : apiOrder.pricing.grandTotal;
-
-  const addressParts = [apiOrder.address.line2, apiOrder.address.city, apiOrder.address.state, apiOrder.address.pincode]
-    .map(part => part?.trim())
-    .filter((part): part is string => !!part);
-
-  const status = deriveStatus(apiOrder, overlay);
-  const failed = status === 'failed';
-
+function mapDriver(apiOrder: ApiOrder): OrderDriver | undefined {
+  const driverId = apiOrder.driverId ?? apiOrder.driver?.id;
+  if (!driverId) return undefined;
+  const summary = apiOrder.driver ?? undefined;
   return {
-    id: apiOrder.orderNumber,
-    customerName: apiOrder.customerName,
-    customerPhone: apiOrder.customerPhone ?? '',
-    itemsCount,
-    location: apiOrder.address.city,
-    addressLine1: apiOrder.address.line1,
-    addressLine2: addressParts.join(', '),
-    timeLabel: formatTimeAgo(new Date(apiOrder.placedAt).getTime()),
-    amount,
-    deliveryCharge: apiOrder.pricing.deliveryFee,
-    paymentMethod: apiOrder.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Paid Online',
-    status,
-    products,
-    specialInstructions: apiOrder.specialInstructions,
-    // There's no real driver-assignment system wired up server-side yet, so we never fabricate
-    // a delivery partner — screens that need one show a "will be assigned shortly" placeholder.
-    deliveryPartner: undefined,
-    cancelReason: !failed ? apiOrder.cancelReason : undefined,
-    failReason: failed ? apiOrder.cancelReason ?? 'Failed quality check' : undefined,
-    rating: overlay?.rating,
-    review: overlay?.review,
-    statusHistory: buildHistory(apiOrder, overlay),
-    cancelledBy: mapCancelledBy(apiOrder.cancelledBy),
+    id: String(driverId),
+    name: summary?.name ?? summary?.fullName,
+    phone: summary?.phone,
+    vehicle: summary?.vehicleType,
+    plate: summary?.vehicleNumber,
   };
 }
 
-type CompleteOutcome = { rating?: number; review?: string };
+function mapRating(value: ApiRating | undefined): { rating?: number; review?: string } {
+  if (value == null) return {};
+  if (typeof value === 'number') return { rating: value };
+  const stars = value.stars ?? value.rating;
+  return { rating: typeof stars === 'number' ? stars : undefined, review: value.reviewText ?? value.review };
+}
+
+function mapOrder(apiOrder: ApiOrder): Order {
+  const products: OrderProduct[] = (apiOrder.items ?? []).map(item => ({
+    productId: item.productId,
+    variantId: item.variantId,
+    name: item.name,
+    variantLabel: item.variantLabel,
+    imageUrl: item.imageUrl,
+    price: item.price,
+    mrp: item.mrp,
+    qty: item.quantity,
+    subtotal: item.subtotal,
+  }));
+  const itemsCount = products.reduce((sum, item) => sum + item.qty, 0);
+  const address = apiOrder.address ?? ({} as ApiOrderAddress);
+  const addressParts = [address.line2, address.landmark, address.city, address.state, address.pincode]
+    .map(part => part?.trim())
+    .filter((part): part is string => !!part);
+  const pricing = apiOrder.pricing ?? ({} as ApiOrderPricing);
+  const placedAt = apiOrder.placedAt ?? apiOrder.createdAt;
+
+  return {
+    id: apiOrder.id,
+    orderNumber: apiOrder.orderNumber,
+    customerName: apiOrder.customerName ?? 'Customer',
+    customerPhone: apiOrder.customerPhone ?? '',
+    itemsCount,
+    location: address.city ?? '',
+    addressLine1: address.line1 ?? '',
+    addressLine2: addressParts.join(', '),
+    contactName: address.contactName,
+    contactPhone: address.contactPhone,
+    placedAt,
+    timeLabel: formatTimeAgo(new Date(placedAt).getTime()),
+    amount: pricing.grandTotal ?? 0,
+    itemsTotal: pricing.itemsTotal ?? 0,
+    taxTotal: pricing.taxTotal ?? 0,
+    deliveryCharge: pricing.deliveryFee ?? 0,
+    platformFee: pricing.platformFee ?? 0,
+    discount: pricing.discount ?? 0,
+    paymentMethod: apiOrder.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Paid Online',
+    paymentStatus: apiOrder.paymentStatus,
+    status: apiOrder.status,
+    products,
+    specialInstructions: apiOrder.specialInstructions,
+    driverId: apiOrder.driverId ? String(apiOrder.driverId) : undefined,
+    driver: mapDriver(apiOrder),
+    cancelReason: apiOrder.cancelReason,
+    cancelledBy: apiOrder.cancelledBy,
+    ...mapRating(apiOrder.rating ?? apiOrder.vendorRating),
+    statusHistory: (apiOrder.statusHistory ?? []).map(event => ({ status: event.status, at: event.at, note: event.note })),
+    deliveredAt: apiOrder.deliveredAt,
+    updatedAt: apiOrder.updatedAt ?? apiOrder.createdAt,
+  };
+}
+
+const POLL_INTERVAL_MS = 10000;
 
 type OrdersContextValue = {
   orders: Order[];
   loading: boolean;
+  error: string | null;
   refreshOrders: () => Promise<void>;
+  /** Fetches a single order by Mongo id from the backend and merges it into the list. */
+  fetchOrder: (orderId: string) => Promise<Order | undefined>;
   getOrder: (orderId: string) => Order | undefined;
   ordersByStatus: (statuses: OrderStatus[]) => Order[];
+  /** True while a status PATCH is in flight for this order — disable action buttons. */
+  isOrderPending: (orderId: string) => boolean;
   acceptOrder: (orderId: string) => Promise<void>;
   acceptAllNew: () => Promise<void>;
-  rejectOrder: (orderId: string, reason?: string) => Promise<void>;
-  cancelAcceptedOrder: (orderId: string, reason: string) => Promise<void>;
-  startQualityCheck: (orderId: string) => void;
-  passQualityCheck: (orderId: string) => Promise<void>;
-  failQualityCheck: (orderId: string) => Promise<void>;
-  markPacked: (orderId: string) => Promise<void>;
-  handoverToPartner: (orderId: string) => Promise<void>;
-  replaceOrderItem: (orderId: string, targetName: string, replacement: OrderProduct) => void;
-  removeOrderItem: (orderId: string, targetName: string) => void;
-  completeOrder: (orderId: string, outcome?: CompleteOutcome) => Promise<void>;
+  rejectOrder: (orderId: string, note: string) => Promise<void>;
+  startPreparing: (orderId: string) => Promise<void>;
+  markReady: (orderId: string) => Promise<void>;
+  cancelOrder: (orderId: string, note: string) => Promise<void>;
 };
 
 const OrdersContext = createContext<OrdersContextValue | null>(null);
 
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
+  const { vendor } = useVendorAuth();
+  const vendorId = vendor?.id ?? null;
+  const vendorActive = vendor?.status === 'active';
   const [rawOrders, setRawOrders] = useState<ApiOrder[]>([]);
-  const [overlays, setOverlays] = useState<Record<string, OrderOverlay>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<Record<string, true>>({});
+  // null until the first successful load — existing "placed" orders at cold start
+  // must not trigger the new-order screen.
+  const seenPlacedIds = useRef<Set<string> | null>(null);
+
+  const announceNewOrders = useCallback(
+    (orders: ApiOrder[]) => {
+      const placed = orders.filter(order => order.status === 'placed');
+      if (!seenPlacedIds.current) {
+        seenPlacedIds.current = new Set(placed.map(order => order.id));
+        return;
+      }
+      const fresh = placed.filter(order => !seenPlacedIds.current!.has(order.id));
+      placed.forEach(order => seenPlacedIds.current!.add(order.id));
+      if (fresh.length === 0 || !vendorActive || !navigationRef.isReady()) return;
+      const newest = fresh[0];
+      const route = currentRoute();
+      const alreadyShowing =
+        route?.name === 'NewOrderReceived' && (route.params as { orderId?: string } | undefined)?.orderId === newest.id;
+      if (!alreadyShowing) navigationRef.navigate('NewOrderReceived', { orderId: newest.id });
+    },
+    [vendorActive],
+  );
 
   const loadOrders = useCallback(async () => {
-    const { data } = await api.get<ApiOrder[]>('/vendor/orders');
-    setRawOrders(data);
-  }, []);
+    const { data } = await api.get('/vendor/orders');
+    const list = unwrapList<ApiOrder>(data);
+    setRawOrders(list);
+    setError(null);
+    announceNewOrders(list);
+  }, [announceNewOrders]);
 
   useEffect(() => {
+    if (!vendorId) {
+      setRawOrders([]);
+      setPendingIds({});
+      setError(null);
+      setLoading(false);
+      seenPlacedIds.current = null;
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     loadOrders()
-      .catch(() => undefined)
+      .catch(err => {
+        if (!cancelled) setError(getApiErrorMessage(err));
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [loadOrders]);
+  }, [vendorId, loadOrders]);
+
+  // Poll while a vendor is logged in and the app is in the foreground.
+  useEffect(() => {
+    if (!vendorId) return undefined;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const tick = () => {
+      loadOrders().catch(() => undefined);
+    };
+    const start = () => {
+      if (timer) clearInterval(timer);
+      timer = setInterval(tick, POLL_INTERVAL_MS);
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+    };
+    if (AppState.currentState === 'active') start();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        tick();
+        start();
+      } else {
+        stop();
+      }
+    });
+    return () => {
+      stop();
+      subscription.remove();
+    };
+  }, [vendorId, loadOrders]);
 
   const refreshOrders = useCallback(async () => {
-    await loadOrders();
+    try {
+      await loadOrders();
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+      throw err;
+    }
   }, [loadOrders]);
 
-  const orders = useMemo(
-    () => rawOrders.map(item => mapOrder(item, overlays[item.orderNumber])),
-    [rawOrders, overlays],
+  const mergeRaw = useCallback((incoming: ApiOrder) => {
+    setRawOrders(prev => {
+      const exists = prev.some(item => item.id === incoming.id);
+      return exists ? prev.map(item => (item.id === incoming.id ? incoming : item)) : [incoming, ...prev];
+    });
+  }, []);
+
+  const fetchOrder = useCallback(
+    async (orderId: string) => {
+      const { data } = await api.get<ApiOrder>(`/vendor/orders/${orderId}`);
+      mergeRaw(data);
+      return mapOrder(data);
+    },
+    [mergeRaw],
   );
 
-  const findRaw = useCallback((orderId: string) => rawOrders.find(item => item.orderNumber === orderId), [rawOrders]);
+  const orders = useMemo(() => rawOrders.map(mapOrder), [rawOrders]);
 
   const setStatus = useCallback(
-    async (orderId: string, status: ApiOrderStatus, note?: string) => {
-      const raw = findRaw(orderId);
-      if (!raw) return;
-      const { data } = await api.patch<ApiOrder>(`/vendor/orders/${raw.id}/status`, { status, note });
-      setRawOrders(prev => prev.map(item => (item.id === data.id ? data : item)));
+    async (orderId: string, status: OrderStatus, note?: string) => {
+      setPendingIds(prev => ({ ...prev, [orderId]: true }));
+      try {
+        const { data } = await api.patch<ApiOrder>(`/vendor/orders/${orderId}/status`, note ? { status, note } : { status });
+        mergeRaw(data);
+      } finally {
+        setPendingIds(prev => {
+          const next = { ...prev };
+          delete next[orderId];
+          return next;
+        });
+      }
     },
-    [findRaw],
+    [mergeRaw],
   );
 
   const acceptOrder = useCallback((orderId: string) => setStatus(orderId, 'accepted'), [setStatus]);
 
   const acceptAllNew = useCallback(async () => {
-    const newOrderIds = rawOrders.filter(item => item.status === 'placed').map(item => item.orderNumber);
+    const newOrderIds = rawOrders.filter(item => item.status === 'placed').map(item => item.id);
     for (const id of newOrderIds) {
       // eslint-disable-next-line no-await-in-loop
       await setStatus(id, 'accepted');
     }
   }, [rawOrders, setStatus]);
 
-  const rejectOrder = useCallback(
-    (orderId: string, reason = 'Rejected by vendor') => setStatus(orderId, 'rejected', reason),
-    [setStatus],
-  );
-
-  const cancelAcceptedOrder = useCallback(
-    (orderId: string, reason: string) => setStatus(orderId, 'cancelled', reason),
-    [setStatus],
-  );
-
-  const startQualityCheck = useCallback((orderId: string) => {
-    // Local-only UI sub-step — the backend has no separate "quality check" state, so there's
-    // nothing to persist here. This just flips a client-side overlay flag so the order shows
-    // the Quality Check screen until `passQualityCheck`/`failQualityCheck` call the real API.
-    setOverlays(prev => ({ ...prev, [orderId]: { ...prev[orderId], qualityCheckStarted: true } }));
-  }, []);
-
-  const passQualityCheck = useCallback((orderId: string) => setStatus(orderId, 'preparing'), [setStatus]);
-
-  const failQualityCheck = useCallback(
-    (orderId: string) => setStatus(orderId, 'cancelled', 'Failed quality check'),
-    [setStatus],
-  );
-
-  const markPacked = useCallback((orderId: string) => setStatus(orderId, 'ready_for_pickup'), [setStatus]);
-
-  const handoverToPartner = useCallback((orderId: string) => setStatus(orderId, 'out_for_delivery'), [setStatus]);
-
-  const completeOrder = useCallback(
-    async (orderId: string, outcome?: CompleteOutcome) => {
-      await setStatus(orderId, 'delivered');
-      if (outcome?.rating !== undefined || outcome?.review !== undefined) {
-        setOverlays(prev => ({
-          ...prev,
-          [orderId]: { ...prev[orderId], rating: outcome?.rating, review: outcome?.review },
-        }));
-      }
-    },
-    [setStatus],
-  );
-
-  const replaceOrderItem = useCallback(
-    (orderId: string, targetName: string, replacement: OrderProduct) => {
-      const current = orders.find(item => item.id === orderId);
-      if (!current) return;
-      const nextProducts = current.products.map(item => (item.name === targetName ? replacement : item));
-      setOverlays(prev => ({ ...prev, [orderId]: { ...prev[orderId], productsOverride: nextProducts } }));
-    },
-    [orders],
-  );
-
-  const removeOrderItem = useCallback(
-    (orderId: string, targetName: string) => {
-      const current = orders.find(item => item.id === orderId);
-      if (!current) return;
-      const nextProducts = current.products.filter(item => item.name !== targetName);
-      setOverlays(prev => ({ ...prev, [orderId]: { ...prev[orderId], productsOverride: nextProducts } }));
-    },
-    [orders],
-  );
+  const rejectOrder = useCallback((orderId: string, note: string) => setStatus(orderId, 'rejected', note), [setStatus]);
+  const startPreparing = useCallback((orderId: string) => setStatus(orderId, 'preparing'), [setStatus]);
+  const markReady = useCallback((orderId: string) => setStatus(orderId, 'ready_for_pickup'), [setStatus]);
+  const cancelOrder = useCallback((orderId: string, note: string) => setStatus(orderId, 'cancelled', note), [setStatus]);
 
   const getOrder = useCallback((orderId: string) => orders.find(order => order.id === orderId), [orders]);
 
@@ -405,44 +433,40 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     [orders],
   );
 
+  const isOrderPending = useCallback((orderId: string) => Boolean(pendingIds[orderId]), [pendingIds]);
+
   const value = useMemo(
     () => ({
       orders,
       loading,
+      error,
       refreshOrders,
+      fetchOrder,
       getOrder,
       ordersByStatus,
+      isOrderPending,
       acceptOrder,
       acceptAllNew,
       rejectOrder,
-      cancelAcceptedOrder,
-      startQualityCheck,
-      passQualityCheck,
-      failQualityCheck,
-      markPacked,
-      handoverToPartner,
-      replaceOrderItem,
-      removeOrderItem,
-      completeOrder,
+      startPreparing,
+      markReady,
+      cancelOrder,
     }),
     [
       orders,
       loading,
+      error,
       refreshOrders,
+      fetchOrder,
       getOrder,
       ordersByStatus,
+      isOrderPending,
       acceptOrder,
       acceptAllNew,
       rejectOrder,
-      cancelAcceptedOrder,
-      startQualityCheck,
-      passQualityCheck,
-      failQualityCheck,
-      markPacked,
-      handoverToPartner,
-      replaceOrderItem,
-      removeOrderItem,
-      completeOrder,
+      startPreparing,
+      markReady,
+      cancelOrder,
     ],
   );
 

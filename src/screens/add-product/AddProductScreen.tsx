@@ -15,12 +15,11 @@ const STEP_CHIPS = [
   '2. Images',
   '3. Category',
   '4. Description',
-  '5. Variants',
+  '5. Pack Size',
   '6. Pricing',
   '7. Tax',
   '8. Identifiers',
   '9. Stock',
-  '10. Availability',
 ];
 
 const METHODS: {
@@ -48,6 +47,7 @@ const METHODS: {
     icon: 'barcode',
     title: 'Scan Barcode',
     description: 'Auto-fill details by scanning product barcode',
+    badge: 'Coming soon',
     background: '#EFF8FF',
     border: '#B2DDFF',
     iconBackground: colors.overlayLight50,
@@ -57,6 +57,7 @@ const METHODS: {
     icon: 'upload',
     title: 'Bulk Upload',
     description: 'Upload multiple products via Excel/CSV file',
+    badge: 'Coming soon',
     background: '#F5F3FF',
     border: '#C4B5FD',
     iconBackground: colors.overlayLight50,
@@ -74,7 +75,7 @@ export function AddProductScreen({ navigation }: Props) {
   // "Add Another"), so gating here catches all of them at once instead of
   // duplicating the check at every call site. The backend enforces the same rule
   // on the actual create call — this is just to redirect before the vendor wastes
-  // time filling out the 10-step wizard only to be blocked at the end.
+  // time filling out the whole wizard only to be blocked at the end.
   useFocusEffect(
     useCallback(() => {
       alerted.current = false;
@@ -106,7 +107,7 @@ export function AddProductScreen({ navigation }: Props) {
       navigation.navigate('ProductBasicInfo');
       return;
     }
-    Alert.alert('Coming soon', 'This add-product method is not available in this preview yet.');
+    Alert.alert('Coming soon', 'This add-product method is not available yet. Please add products manually.');
   }
 
   if (checking) {
@@ -165,7 +166,7 @@ export function AddProductScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryText}>Manual entry takes ~5 minutes · 10 steps</Text>
+          <Text style={styles.summaryText}>Manual entry · {STEP_CHIPS.length} steps</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow}>
             {STEP_CHIPS.map(chip => (
               <View key={chip} style={styles.chip}>

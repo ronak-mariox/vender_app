@@ -1,183 +1,238 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, NavHeader } from '../../components';
-import { ProductVariantSummary, useProductCatalog } from '../../context/ProductCatalogContext';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { getApiErrorMessage } from '../../services/api';
-import { type FormErrors } from '../../utils/validators';
+import {
+  GST_ON_FEE_PERCENT_LABEL,
+  GST_ON_FEE_RATE,
+  PLATFORM_FEE_PERCENT_LABEL,
+  PLATFORM_FEE_RATE,
+} from '../../constants/fees';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'EditPrice'>;
 
-type Errors = FormErrors<'sellingPrice'>;
+type VariantForm = {
+  id: string;
+  size: string;
+  mrp: string;
+  sellingPrice: string;
+  isPrimary: boolean;
+};
 
-const PLATFORM_FEE_RATE = 0.08;
-const GST_ON_FEE_RATE = 0.18;
+type VariantErrors = Partial<Record<'size' | 'mrp' | 'sellingPrice', string>>;
+
+function validateVariant(variant: VariantForm): VariantErrors {
+  const errors: VariantErrors = {};
+  const mrp = parseFloat(variant.mrp);
+  const sp = parseFloat(variant.sellingPrice);
+  if (!variant.size.trim()) errors.size = 'Enter a label';
+  if (Number.isNaN(mrp) || mrp <= 0) errors.mrp = 'Enter a valid MRP';
+  if (Number.isNaN(sp) || sp <= 0) errors.sellingPrice = 'Enter a valid price';
+  else if (!errors.mrp && sp > mrp) errors.sellingPrice = 'Cannot exceed MRP';
+  return errors;
+}
 
 export function EditPriceScreen({ navigation, route }: Props) {
   const { productId } = route.params;
   const { products, updateProduct } = useProductCatalog();
   const product = products.find(item => item.id === productId);
 
-  const [sellingPrice, setSellingPrice] = useState(String(product?.sellingPrice ?? ''));
-  const [variants, setVariants] = useState<ProductVariantSummary[]>(product?.variants ?? []);
-  const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
+  const [variants, setVariants] = useState<VariantForm[]>(
+    (product?.variants ?? []).map(variant => ({
+      id: variant.id,
+      size: variant.size,
+      mrp: String(variant.mrp),
+      sellingPrice: String(variant.sellingPrice),
+      isPrimary: variant.isPrimary,
+    })),
+  );
+  const [errors, setErrors] = useState<Record<string, VariantErrors>>({});
+  const [formError, setFormError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState<Errors>({});
-
-  const mrp = product?.mrp ?? 0;
-  const sp = parseFloat(sellingPrice) || 0;
-
-  const customerSaves = mrp > sp ? mrp - sp : 0;
-  const discountPercent = mrp > 0 && customerSaves > 0 ? (customerSaves / mrp) * 100 : 0;
-  const payout = useMemo(() => sp - sp * PLATFORM_FEE_RATE - sp * PLATFORM_FEE_RATE * GST_ON_FEE_RATE, [sp]);
 
   if (!product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <NavHeader title="Edit Price & Discount" onBack={() => navigation.goBack()} />
+        <NavHeader title="Edit Price & Variants" onBack={() => navigation.goBack()} />
+        <Text style={styles.emptyText}>This product is no longer available.</Text>
       </SafeAreaView>
     );
   }
 
+  if (variants.length === 0) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <NavHeader title="Edit Price & Variants" onBack={() => navigation.goBack()} />
+        <Text style={styles.emptyText}>
+          This product has no variants, so there is no price to edit. Contact support to fix this listing.
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
+  function updateVariant(id: string, patch: Partial<VariantForm>) {
+    setVariants(prev => prev.map(variant => (variant.id === id ? { ...variant, ...patch } : variant)));
+    setErrors(prev => ({ ...prev, [id]: {} }));
+    setFormError(undefined);
+  }
+
+  function setPrimary(id: string) {
+    setVariants(prev => prev.map(variant => ({ ...variant, isPrimary: variant.id === id })));
+  }
+
   async function handleSave() {
     if (saving) return;
-
-    const nextErrors: Errors = {};
-    if (sp <= 0) {
-      nextErrors.sellingPrice = 'Enter a valid selling price';
-    } else if (sp > mrp) {
-      nextErrors.sellingPrice = 'Selling price cannot exceed MRP';
-    }
+    const nextErrors: Record<string, VariantErrors> = {};
+    variants.forEach(variant => {
+      const rowErrors = validateVariant(variant);
+      if (Object.keys(rowErrors).length > 0) nextErrors[variant.id] = rowErrors;
+    });
+    const labels = variants.map(variant => variant.size.trim().toLowerCase());
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
+    if (new Set(labels).size !== labels.length) {
+      setFormError('Each variant needs a different label');
+      return;
+    }
 
     setSaving(true);
     try {
-      await updateProduct(productId, { sellingPrice: sp, variants });
+      await updateProduct(productId, {
+        variants: variants.map(variant => ({
+          id: variant.id,
+          size: variant.size.trim(),
+          mrp: parseFloat(variant.mrp),
+          sellingPrice: parseFloat(variant.sellingPrice),
+          isPrimary: variant.isPrimary,
+          stock: product!.variants?.find(item => item.id === variant.id)?.stock ?? 0,
+        })),
+      });
       navigation.goBack();
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err, 'Could not save. Please try again.') });
+      setFormError(getApiErrorMessage(err, 'Could not save. Please try again.'));
     } finally {
       setSaving(false);
     }
   }
 
-  function updateVariantPrice(id: string, price: string) {
-    const value = parseFloat(price) || 0;
-    setVariants(prev => prev.map(variant => (variant.id === id ? { ...variant, sellingPrice: value } : variant)));
-  }
+  const multiple = variants.length > 1;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <NavHeader title="Edit Price & Discount" onBack={() => navigation.goBack()} rightLabel="Save" onRightPress={handleSave} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.card}>
-          <View>
-            <Text style={styles.label}>MRP (₹)</Text>
-            <View style={styles.lockedField}>
-              <Text style={styles.lockedCurrency}>₹</Text>
-              <Text style={styles.lockedValue}>{mrp}</Text>
-              <Text style={styles.lockedHint}>Cannot change</Text>
-            </View>
-            <Text style={styles.helperText}>MRP is set during product creation and cannot be changed here.</Text>
-          </View>
-
-          <View>
-            <View style={styles.labelRow}>
-              <Text style={styles.label}>Selling Price (₹)</Text>
-              <Text style={styles.required}> *</Text>
-            </View>
-            <View style={[styles.amountField, errors.sellingPrice && styles.amountFieldError]}>
-              <Text style={styles.amountCurrency}>₹</Text>
-              <TextInput
-                value={sellingPrice}
-                onChangeText={text => {
-                  setSellingPrice(text.replace(/[^0-9.]/g, ''));
-                  if (errors.sellingPrice) setErrors(prev => ({ ...prev, sellingPrice: undefined }));
-                }}
-                keyboardType="decimal-pad"
-                style={styles.amountInput}
-              />
-            </View>
-            {errors.sellingPrice ? <Text style={styles.errorText}>{errors.sellingPrice}</Text> : null}
-          </View>
-
-          <View style={styles.metricsRow}>
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Customer Saves</Text>
-              <Text style={[styles.metricValue, { color: colors.warning }]}>₹{customerSaves.toFixed(0)}</Text>
-            </View>
-            <View style={[styles.metricBox, styles.metricBoxDiscount]}>
-              <Text style={[styles.metricLabel, { color: '#A16207' }]}>Discount</Text>
-              <Text style={[styles.metricValue, { color: colors.warning }]}>{discountPercent.toFixed(1)}%</Text>
-            </View>
-            <View style={[styles.metricBox, styles.metricBoxPayout]}>
-              <Text style={[styles.metricLabel, { color: colors.primary }]}>Your Payout</Text>
-              <Text style={[styles.metricValue, { color: colors.primary }]}>₹{payout.toFixed(2)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {variants.length > 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.variantsTitle}>Variant Prices</Text>
-            {variants.map((variant, index) => {
-              const variantDiscount =
-                variant.mrp > 0 && variant.mrp > variant.sellingPrice
-                  ? Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100)
-                  : 0;
-              const isEditing = editingVariantId === variant.id;
-              return (
-                <View
-                  key={variant.id}
-                  style={[
-                    styles.variantRow,
-                    index < variants.length - 1 && styles.variantRowDivider,
-                    variant.isPrimary && styles.variantRowPrimary,
-                  ]}
-                >
-                  <View style={[styles.sizeChip, variant.isPrimary && styles.sizeChipPrimary]}>
-                    <Text style={[styles.sizeChipText, variant.isPrimary && styles.sizeChipTextPrimary]}>
-                      {variant.size}
-                    </Text>
-                  </View>
-                  {isEditing ? (
-                    <TextInput
-                      value={String(variant.sellingPrice)}
-                      onChangeText={text => updateVariantPrice(variant.id, text.replace(/[^0-9.]/g, ''))}
-                      keyboardType="decimal-pad"
-                      autoFocus
-                      style={styles.variantInput}
-                      onBlur={() => setEditingVariantId(null)}
-                    />
+      <NavHeader
+        title="Edit Price & Variants"
+        onBack={() => navigation.goBack()}
+        rightLabel="Save"
+        onRightPress={handleSave}
+      />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {variants.map(variant => {
+          const rowErrors = errors[variant.id] ?? {};
+          const mrp = parseFloat(variant.mrp) || 0;
+          const sp = parseFloat(variant.sellingPrice) || 0;
+          const saves = mrp > sp ? mrp - sp : 0;
+          const discount = mrp > 0 && saves > 0 ? (saves / mrp) * 100 : 0;
+          const fee = sp * PLATFORM_FEE_RATE;
+          const payout = sp - fee - fee * GST_ON_FEE_RATE;
+          return (
+            <View key={variant.id} style={[styles.card, variant.isPrimary && multiple && styles.cardPrimary]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{multiple ? 'Variant' : 'Price'}</Text>
+                {multiple ? (
+                  variant.isPrimary ? (
+                    <Text style={styles.primaryTag}>Primary</Text>
                   ) : (
-                    <View style={styles.variantPriceRow}>
-                      <Text style={styles.variantLabel}>MRP</Text>
-                      <Text style={styles.variantMrp}>₹{variant.mrp}</Text>
-                      <Text style={styles.variantArrow}>→</Text>
-                      <Text style={styles.variantSp}>₹{variant.sellingPrice}</Text>
-                    </View>
-                  )}
-                  <Text style={styles.variantDiscount}>{variantDiscount}% off</Text>
-                  <Pressable onPress={() => setEditingVariantId(isEditing ? null : variant.id)} hitSlop={8}>
-                    <Text style={styles.editLink}>{isEditing ? 'Done' : 'Edit'}</Text>
-                  </Pressable>
+                    <Pressable onPress={() => setPrimary(variant.id)} hitSlop={8}>
+                      <Text style={styles.link}>Make primary</Text>
+                    </Pressable>
+                  )
+                ) : null}
+              </View>
+
+              <Field
+                label="Label / Pack size"
+                value={variant.size}
+                onChangeText={text => updateVariant(variant.id, { size: text })}
+                error={rowErrors.size}
+              />
+              <View style={styles.row}>
+                <Field
+                  label="MRP (₹)"
+                  value={variant.mrp}
+                  onChangeText={text => updateVariant(variant.id, { mrp: text.replace(/[^0-9.]/g, '') })}
+                  error={rowErrors.mrp}
+                  numeric
+                />
+                <Field
+                  label="Selling Price (₹)"
+                  value={variant.sellingPrice}
+                  onChangeText={text => updateVariant(variant.id, { sellingPrice: text.replace(/[^0-9.]/g, '') })}
+                  error={rowErrors.sellingPrice}
+                  numeric
+                />
+              </View>
+
+              <View style={styles.metricsRow}>
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricLabel}>Customer Saves</Text>
+                  <Text style={styles.metricValue}>₹{saves.toFixed(2)}</Text>
                 </View>
-              );
-            })}
-          </View>
-        ) : null}
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricLabel}>Discount</Text>
+                  <Text style={styles.metricValue}>{discount.toFixed(1)}%</Text>
+                </View>
+                <View style={[styles.metricBox, styles.metricBoxPayout]}>
+                  <Text style={styles.metricLabel}>Est. Payout</Text>
+                  <Text style={[styles.metricValue, styles.metricValuePayout]}>₹{payout.toFixed(2)}</Text>
+                </View>
+              </View>
+            </View>
+          );
+        })}
 
-        {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}
+        <Text style={styles.helperText}>
+          Payout estimate = selling price − {PLATFORM_FEE_PERCENT_LABEL} platform fee − {GST_ON_FEE_PERCENT_LABEL} GST
+          on that fee. Stock is managed from Update Stock.
+        </Text>
 
-        <View style={styles.footer}>
-          <Button label="Save Changes" onPress={handleSave} loading={saving} disabled={saving} />
-        </View>
+        {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+
+        <Button label="Save Changes" onPress={handleSave} loading={saving} disabled={saving} />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChangeText,
+  error,
+  numeric,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  error?: string;
+  numeric?: boolean;
+}) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={numeric ? 'decimal-pad' : 'default'}
+        style={[styles.input, error ? styles.inputError : null]}
+        placeholderTextColor={colors.textTertiary}
+      />
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </View>
   );
 }
 
@@ -189,8 +244,14 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: spacing.xxl,
     paddingTop: spacing.xl,
-    paddingBottom: spacing.xl,
+    paddingBottom: spacing.xxl,
     gap: spacing.xl,
+  },
+  emptyText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    padding: spacing.xxl,
   },
   card: {
     backgroundColor: colors.white,
@@ -198,83 +259,61 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radii.xl,
     padding: spacing.xl,
-    gap: spacing.xl,
+    gap: spacing.lg,
   },
-  labelRow: {
+  cardPrimary: {
+    borderColor: colors.primary,
+  },
+  cardHeader: {
     flexDirection: 'row',
-    marginBottom: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardTitle: {
+    ...typography.bodySemibold,
+    color: colors.textPrimary,
+  },
+  primaryTag: {
+    ...typography.tinyBold,
+    color: colors.primary,
+  },
+  link: {
+    ...typography.captionSemibold,
+    color: colors.primary,
+  },
+  row: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  field: {
+    flex: 1,
   },
   label: {
     ...typography.label,
     color: colors.textPrimary,
     marginBottom: spacing.sm,
   },
-  required: {
-    ...typography.label,
-    color: colors.error,
-  },
-  lockedField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    height: 52,
-    borderWidth: 1,
+  input: {
+    ...typography.body,
+    height: 48,
+    borderWidth: 1.5,
     borderColor: colors.border,
     borderRadius: radii.md,
-    paddingHorizontal: spacing.xl,
-    backgroundColor: colors.surface,
-  },
-  lockedCurrency: {
-    ...typography.bodyLarge,
-    fontSize: 18,
-    color: colors.textSecondary,
-  },
-  lockedValue: {
-    fontSize: 24,
-    fontFamily: fontFamilies.bold,
-    color: colors.textSecondary,
-    flex: 1,
-  },
-  lockedHint: {
-    ...typography.tiny,
-    color: colors.textSecondary,
-  },
-  helperText: {
-    ...typography.tiny,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
-  amountField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    height: 56,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    color: colors.textPrimary,
     backgroundColor: colors.white,
   },
-  amountFieldError: {
+  inputError: {
     borderColor: colors.error,
-    backgroundColor: colors.errorSurface,
   },
   errorText: {
     ...typography.caption,
     color: colors.error,
-    marginTop: spacing.sm,
+    marginTop: spacing.xs,
   },
-  amountCurrency: {
-    ...typography.h2,
-    fontSize: 22,
+  helperText: {
+    ...typography.tiny,
     color: colors.textSecondary,
-  },
-  amountInput: {
-    flex: 1,
-    fontSize: 28,
-    fontFamily: fontFamilies.extrabold,
-    color: colors.primary,
-    padding: 0,
   },
   metricsRow: {
     flexDirection: 'row',
@@ -288,9 +327,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
   },
-  metricBoxDiscount: {
-    backgroundColor: colors.warningSurface,
-  },
   metricBoxPayout: {
     backgroundColor: colors.primarySurface,
   },
@@ -300,90 +336,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   metricValue: {
-    fontSize: 17,
-    fontFamily: fontFamilies.extrabold,
+    fontSize: 15,
+    fontFamily: fontFamilies.bold,
     color: colors.textPrimary,
   },
-  variantsTitle: {
-    ...typography.captionSemibold,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.72,
-  },
-  variantRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  variantRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  variantRowPrimary: {},
-  sizeChip: {
-    minWidth: 44,
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  sizeChipPrimary: {
-    backgroundColor: colors.primarySurface,
-    borderColor: colors.primary,
-  },
-  sizeChipText: {
-    ...typography.captionBold,
-    color: colors.textPrimary,
-  },
-  sizeChipTextPrimary: {
+  metricValuePayout: {
     color: colors.primary,
-  },
-  variantPriceRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  variantLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  variantMrp: {
-    ...typography.labelSemibold,
-    color: colors.textPrimary,
-  },
-  variantArrow: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  variantSp: {
-    ...typography.labelSemibold,
-    color: colors.primary,
-  },
-  variantInput: {
-    flex: 1,
-    ...typography.labelSemibold,
-    color: colors.textPrimary,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  variantDiscount: {
-    ...typography.tinyBold,
-    color: colors.warning,
-  },
-  editLink: {
-    ...typography.caption,
-    color: colors.primary,
-  },
-  footer: {
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xl,
   },
 });

@@ -1,17 +1,20 @@
 import React, { useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { formatTimeAgo } from '../../utils/time';
+import { useInventoryRefresh } from '../inventory/useInventoryRefresh';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PricingOverview'>;
 
 export function PricingOverviewScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
+  const { refreshing, onRefresh } = useInventoryRefresh();
 
   const stats = useMemo(() => {
     const withMrp = products.filter(product => product.mrp > 0);
@@ -20,7 +23,10 @@ export function PricingOverviewScreen({ navigation }: Props) {
       : 0;
     const avgDiscount = withMrp.length
       ? Math.round(
-          withMrp.reduce((sum, product) => sum + ((product.mrp - product.sellingPrice) / product.mrp) * 100, 0) /
+          withMrp.reduce(
+            (sum, product) => sum + (Math.max(0, product.mrp - product.sellingPrice) / product.mrp) * 100,
+            0,
+          ) /
             withMrp.length,
         )
       : 0;
@@ -41,7 +47,7 @@ export function PricingOverviewScreen({ navigation }: Props) {
     products.forEach(product => {
       const entry = map.get(product.categoryId) ?? {
         categoryId: product.categoryId,
-        categoryName: product.categoryName,
+        categoryName: product.categoryName || 'Other',
         count: 0,
         totalMrp: 0,
       };
@@ -56,7 +62,11 @@ export function PricingOverviewScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         <View style={styles.headerBlock}>
           <Text style={styles.title}>Pricing</Text>
           <Text style={styles.subtitle}>Manage product prices</Text>
@@ -68,10 +78,10 @@ export function PricingOverviewScreen({ navigation }: Props) {
           <StatTile value={`${stats.avgDiscount}%`} label="Avg Discount" />
         </View>
 
-        <Text style={styles.sectionLabel}>Recent Updates</Text>
+        <Text style={styles.sectionLabel}>Recently Updated Products</Text>
         <View style={styles.card}>
           {recentUpdates.length === 0 ? (
-            <Text style={styles.emptyText}>No recent price updates</Text>
+            <Text style={styles.emptyText}>No products yet</Text>
           ) : (
             recentUpdates.map((product, index) => (
               <Pressable
@@ -88,7 +98,7 @@ export function PricingOverviewScreen({ navigation }: Props) {
                   </Text>
                 </View>
                 <View style={styles.updatedPill}>
-                  <Text style={styles.updatedPillText}>Updated</Text>
+                  <Text style={styles.updatedPillText}>{formatTimeAgo(product.updatedAt ?? 0)}</Text>
                 </View>
               </Pressable>
             ))
@@ -122,7 +132,7 @@ export function PricingOverviewScreen({ navigation }: Props) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button label="Bulk Price Update" onPress={() => navigation.navigate('CategoryPricingList', {})} />
+        <Button label="View All Product Prices" onPress={() => navigation.navigate('CategoryPricingList', {})} />
       </View>
     </SafeAreaView>
   );

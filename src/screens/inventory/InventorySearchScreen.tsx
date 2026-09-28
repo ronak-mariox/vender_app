@@ -90,6 +90,7 @@ export function InventorySearchScreen({ navigation }: Props) {
         <InventoryRow
           key={product.id}
           name={product.name}
+          imageUrl={product.images?.[0]}
           sku={product.sku}
           onPress={() => navigation.navigate('ProductStockDetails', { productId: product.id })}
           right={

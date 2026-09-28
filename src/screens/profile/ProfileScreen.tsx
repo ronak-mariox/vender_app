@@ -1,9 +1,12 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { useProfile } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus } from '../../context/ProfileContext';
 import { Badge, ScreenContainer } from '../../components';
+import type { BadgeTone } from '../../components';
+import { getApiErrorMessage } from '../../services/api';
+import { resolveAssetUrl } from '../../utils/resolveAssetUrl';
 import { Icon, IconName } from '../../icons/Icon';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -21,8 +24,30 @@ type MenuSection = {
   items: MenuItem[];
 };
 
+const STATUS_BADGE: Record<string, { label: string; tone: BadgeTone }> = {
+  active: { label: 'Active', tone: 'success' },
+  pending: { label: 'Under Review', tone: 'warning' },
+  suspended: { label: 'Suspended', tone: 'error' },
+  rejected: { label: 'Rejected', tone: 'error' },
+};
+
 export function ProfileScreen({ navigation }: Props) {
-  const { profile } = useProfile();
+  const { profile, updateAvatar } = useProfile();
+  useProfileRefreshOnFocus();
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const statusBadge = STATUS_BADGE[profile.status];
+
+  async function handleChangeAvatar() {
+    if (uploadingAvatar) return;
+    setUploadingAvatar(true);
+    try {
+      await updateAvatar();
+    } catch (err) {
+      Alert.alert('Could not update photo', getApiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
 
   const sections: MenuSection[] = [
     {
@@ -81,14 +106,34 @@ export function ProfileScreen({ navigation }: Props) {
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
-          </View>
+          <Pressable
+            style={styles.avatar}
+            onPress={handleChangeAvatar}
+            disabled={uploadingAvatar}
+            accessibilityLabel="Change profile photo"
+          >
+            {uploadingAvatar ? (
+              <ActivityIndicator color={colors.white} />
+            ) : profile.avatarUrl ? (
+              <Image source={{ uri: resolveAssetUrl(profile.avatarUrl) }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
+            )}
+            <View style={styles.avatarEditBadge}>
+              <Icon name="camera" size={12} color={colors.primary} />
+            </View>
+          </Pressable>
           <Text style={styles.storeName}>{profile.storeName}</Text>
           <Text style={styles.vendorCode}>{profile.vendorCode}</Text>
           <View style={styles.chipRow}>
-            <Badge label={profile.status} tone="success" />
-            <Badge label="KYC Verified" tone="success" icon={profile.kycVerified ? 'shield-check' : undefined} />
+            {statusBadge ? <Badge label={statusBadge.label} tone={statusBadge.tone} /> : null}
+            {profile.kycVerified ? (
+              <Badge label="KYC Verified" tone="success" icon="shield-check" />
+            ) : profile.kycStatus === 'rejected' ? (
+              <Badge label="KYC Rejected" tone="error" />
+            ) : profile.kycStatus ? (
+              <Badge label="KYC Pending" tone="warning" />
+            ) : null}
           </View>
 
           <View style={styles.statStrip}>
@@ -101,7 +146,9 @@ export function ProfileScreen({ navigation }: Props) {
               <Text style={styles.statLabel}>Revenue</Text>
             </View>
             <View style={styles.statCell}>
-              <Text style={styles.statValue}>{profile.stats.rating}★</Text>
+              <Text style={styles.statValue}>
+                {profile.stats.rating !== null ? `${profile.stats.rating}★` : '—'}
+              </Text>
               <Text style={styles.statLabel}>Rating</Text>
             </View>
           </View>
@@ -141,10 +188,7 @@ export function ProfileScreen({ navigation }: Props) {
           <Icon name="arrow-right" size={18} color={colors.error} />
           <Text style={styles.signOutText}>Sign Out</Text>
         </Pressable>
-
-        <View style={styles.versionRow}>
-          <Text style={styles.versionText}>v2.4.1</Text>
-        </View>
+        <View style={styles.signOutSpacer} />
       </ScrollView>
     </ScreenContainer>
   );
@@ -184,6 +228,24 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -300,12 +362,7 @@ const styles = StyleSheet.create({
     lineHeight: 22.5,
     color: colors.error,
   },
-  versionRow: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-  },
-  versionText: {
-    ...typography.caption,
-    color: colors.textTertiary,
+  signOutSpacer: {
+    height: spacing.xl,
   },
 });

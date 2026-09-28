@@ -1,37 +1,44 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { AddProductHeader, Button, FormSectionCard, Input, ScreenContainer, Switch } from '../../components';
-import { Icon } from '../../icons/Icon';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { AddProductHeader, Button, FormSectionCard, Input, ScreenContainer } from '../../components';
+import { ADD_PRODUCT_TOTAL_STEPS, useProductDraft, usesVariantPricing } from '../../context/ProductDraftContext';
 import { isNonNegativeInteger, type FormErrors } from '../../utils/validators';
-import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { colors, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductStockQuantity'>;
 
-type Errors = FormErrors<'reorderLevel' | 'maxStock'>;
+type Errors = FormErrors<'opening' | 'reorderLevel' | 'maxStock'>;
 
 export function ProductStockQuantityScreen({ navigation }: Props) {
   const { draft, updateStock } = useProductDraft();
-  const [opening, setOpening] = useState(draft.stock?.opening ?? 0);
-  const [reorderLevel, setReorderLevel] = useState(draft.stock?.reorderLevel ?? '20');
-  const [maxStock, setMaxStock] = useState(draft.stock?.maxStock ?? '500');
-  const [trackAutomatically, setTrackAutomatically] = useState(draft.stock?.trackAutomatically ?? true);
-  const [autoPause, setAutoPause] = useState(draft.stock?.autoPause ?? true);
+  const perVariant = usesVariantPricing(draft.packSize);
+  const variantStockTotal = (draft.packSize?.variants ?? []).reduce(
+    (sum, variant) => sum + (parseInt(variant.stock, 10) || 0),
+    0,
+  );
+  const [opening, setOpening] = useState(draft.stock?.opening ?? '');
+  const [reorderLevel, setReorderLevel] = useState(draft.stock?.reorderLevel ?? '');
+  const [maxStock, setMaxStock] = useState(draft.stock?.maxStock ?? '');
   const [errors, setErrors] = useState<Errors>({});
 
   function handleContinue() {
     const nextErrors: Errors = {};
-    if (!isNonNegativeInteger(reorderLevel.trim())) {
-      nextErrors.reorderLevel = 'Enter a valid reorder level';
+    if (!perVariant && !isNonNegativeInteger(opening)) {
+      nextErrors.opening = 'Enter the number of units you have in stock';
     }
-    if (!isNonNegativeInteger(maxStock.trim())) {
-      nextErrors.maxStock = 'Enter a valid max stock';
+    if (reorderLevel.trim() && !isNonNegativeInteger(reorderLevel)) {
+      nextErrors.reorderLevel = 'Enter a whole number';
+    }
+    if (maxStock.trim() && !isNonNegativeInteger(maxStock)) {
+      nextErrors.maxStock = 'Enter a whole number';
     }
     if (
       !nextErrors.reorderLevel &&
       !nextErrors.maxStock &&
+      reorderLevel.trim() &&
+      maxStock.trim() &&
       Number(reorderLevel) > Number(maxStock)
     ) {
       nextErrors.maxStock = 'Max stock must be at least the reorder level';
@@ -41,13 +48,11 @@ export function ProductStockQuantityScreen({ navigation }: Props) {
     if (Object.keys(nextErrors).length > 0) return;
 
     updateStock({
-      opening,
+      opening: perVariant ? '' : opening.trim(),
       reorderLevel: reorderLevel.trim(),
       maxStock: maxStock.trim(),
-      trackAutomatically,
-      autoPause,
     });
-    navigation.navigate('ProductAvailability');
+    navigation.navigate('ReviewProduct');
   }
 
   return (
@@ -55,33 +60,34 @@ export function ProductStockQuantityScreen({ navigation }: Props) {
       <AddProductHeader
         title="Stock Quantity"
         currentStep={9}
+        totalSteps={ADD_PRODUCT_TOTAL_STEPS}
         onBack={() => navigation.goBack()}
-        onSaveDraft={() => navigation.navigate('ProductCatalog')}
       />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <FormSectionCard>
-          <View>
-            <View style={styles.labelRow}>
+          {perVariant ? (
+            <View>
               <Text style={styles.label}>Opening Stock</Text>
-              <Text style={styles.required}> *</Text>
+              <Text style={styles.helperText}>
+                {variantStockTotal} units across {draft.packSize?.variants.length ?? 0} variants — set per variant on
+                the Pack Size step.
+              </Text>
             </View>
-            <View style={styles.stepperField}>
-              <Pressable
-                style={styles.stepperButton}
-                onPress={() => setOpening(value => Math.max(0, value - 1))}
-              >
-                <Icon name="minus" size={18} color={colors.textPrimary} />
-              </Pressable>
-              <Text style={styles.stepperValue}>{opening}</Text>
-              <Pressable
-                style={[styles.stepperButton, styles.stepperButtonAdd]}
-                onPress={() => setOpening(value => value + 1)}
-              >
-                <Icon name="plus" size={18} color={colors.primary} />
-              </Pressable>
-            </View>
-            <Text style={styles.helperText}>Current physical stock count</Text>
-          </View>
+          ) : (
+            <Input
+              label="Opening Stock"
+              required
+              value={opening}
+              onChangeText={text => {
+                setOpening(text.replace(/[^0-9]/g, ''));
+                if (errors.opening) setErrors(prev => ({ ...prev, opening: undefined }));
+              }}
+              placeholder="0"
+              keyboardType="number-pad"
+              error={errors.opening}
+              helperText={errors.opening ? undefined : 'Current physical stock count'}
+            />
+          )}
 
           <View style={styles.row}>
             <View style={styles.halfField}>
@@ -92,8 +98,8 @@ export function ProductStockQuantityScreen({ navigation }: Props) {
                   setReorderLevel(text.replace(/[^0-9]/g, ''));
                   if (errors.reorderLevel) setErrors(prev => ({ ...prev, reorderLevel: undefined }));
                 }}
-                keyboardType="numeric"
-                helperText={errors.reorderLevel ? undefined : 'Alert when stock falls below'}
+                keyboardType="number-pad"
+                helperText={errors.reorderLevel ? undefined : 'Low-stock alert at or below'}
                 error={errors.reorderLevel}
               />
             </View>
@@ -105,33 +111,16 @@ export function ProductStockQuantityScreen({ navigation }: Props) {
                   setMaxStock(text.replace(/[^0-9]/g, ''));
                   if (errors.maxStock) setErrors(prev => ({ ...prev, maxStock: undefined }));
                 }}
-                keyboardType="numeric"
-                helperText={errors.maxStock ? undefined : 'Maximum capacity'}
+                keyboardType="number-pad"
+                helperText={errors.maxStock ? undefined : 'Optional capacity'}
                 error={errors.maxStock}
               />
             </View>
           </View>
         </FormSectionCard>
 
-        <View style={styles.card}>
-          <View style={styles.toggleRow}>
-            <View style={styles.toggleTextColumn}>
-              <Text style={styles.toggleTitle}>Track Stock Automatically</Text>
-              <Text style={styles.toggleSubtitle}>Reduce stock when orders are placed</Text>
-            </View>
-            <Switch value={trackAutomatically} onChange={setTrackAutomatically} />
-          </View>
-          <View style={[styles.toggleRow, styles.toggleRowSpaced]}>
-            <View style={styles.toggleTextColumn}>
-              <Text style={styles.toggleTitle}>Auto-pause when Out of Stock</Text>
-              <Text style={styles.toggleSubtitle}>Hide from customers when 0 stock</Text>
-            </View>
-            <Switch value={autoPause} onChange={setAutoPause} />
-          </View>
-        </View>
-
         <View style={styles.footer}>
-          <Button label="Continue" onPress={handleContinue} />
+          <Button label="Review Product" onPress={handleContinue} />
         </View>
       </ScrollView>
     </ScreenContainer>
@@ -145,42 +134,8 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
     gap: spacing.xl,
   },
-  labelRow: {
-    flexDirection: 'row',
-    marginBottom: spacing.sm,
-  },
   label: {
     ...typography.label,
-    color: colors.textPrimary,
-  },
-  required: {
-    ...typography.label,
-    color: colors.error,
-  },
-  stepperField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 64,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    borderRadius: radii.md,
-    backgroundColor: colors.white,
-    overflow: 'hidden',
-  },
-  stepperButton: {
-    width: 56,
-    height: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperButtonAdd: {
-    backgroundColor: colors.primarySurface,
-  },
-  stepperValue: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 32,
-    fontFamily: fontFamilies.extrabold,
     color: colors.textPrimary,
   },
   helperText: {
@@ -194,37 +149,6 @@ const styles = StyleSheet.create({
   },
   halfField: {
     flex: 1,
-  },
-  card: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.xl,
-    padding: spacing.xl,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.lg,
-  },
-  toggleRowSpaced: {
-    marginTop: spacing.lg,
-    paddingTop: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  toggleTextColumn: {
-    flex: 1,
-    gap: 2,
-  },
-  toggleTitle: {
-    ...typography.bodySemibold,
-    color: colors.textPrimary,
-  },
-  toggleSubtitle: {
-    ...typography.tiny,
-    color: colors.textSecondary,
   },
   footer: {
     paddingTop: spacing.sm,

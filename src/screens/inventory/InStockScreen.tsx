@@ -1,11 +1,13 @@
 import React, { useMemo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { InventoryRow } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { useInventory } from '../../context/InventoryContext';
+import { useInventoryRefresh } from './useInventoryRefresh';
 import { isInventoryCategory } from '../../utils/inventory';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -13,9 +15,16 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'InStock'>;
 
 export function InStockScreen({ navigation }: Props) {
   const { products } = useProductCatalog();
+  const { refreshing, onRefresh } = useInventoryRefresh();
+  const { categoryFilter } = useInventory();
   const inStockProducts = useMemo(
-    () => products.filter(product => isInventoryCategory(product, 'in-stock')),
-    [products],
+    () =>
+      products.filter(
+        product =>
+          isInventoryCategory(product, 'in-stock') &&
+          (categoryFilter.length === 0 || categoryFilter.includes(product.categoryId)),
+      ),
+    [products, categoryFilter],
   );
 
   return (
@@ -26,7 +35,10 @@ export function InStockScreen({ navigation }: Props) {
         </Pressable>
         <View style={styles.headerTextColumn}>
           <Text style={styles.headerTitle}>In Stock</Text>
-          <Text style={styles.headerSubtitle}>{inStockProducts.length} products with healthy stock</Text>
+          <Text style={styles.headerSubtitle}>
+            {inStockProducts.length} products with healthy stock
+            {categoryFilter.length > 0 ? ' · filtered' : ''}
+          </Text>
         </View>
         <Pressable
           style={styles.iconButton}
@@ -47,9 +59,11 @@ export function InStockScreen({ navigation }: Props) {
         data={inStockProducts}
         keyExtractor={item => item.id}
         style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item }) => (
           <InventoryRow
             name={item.name}
+            imageUrl={item.images?.[0]}
             sku={item.sku}
             onPress={() => navigation.navigate('ProductStockDetails', { productId: item.id })}
             right={

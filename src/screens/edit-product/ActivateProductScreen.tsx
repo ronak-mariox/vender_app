@@ -8,6 +8,7 @@ import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ActivateProduct'>;
 
@@ -31,8 +32,10 @@ export function ActivateProductScreen({ navigation, route }: Props) {
     );
   }
 
+  const awaitingApproval = product.status === 'pending' || product.status === 'rejected';
+
   async function handleConfirm() {
-    if (saving) return;
+    if (saving || awaitingApproval) return;
     setSaving(true);
     try {
       await setProductStatus(productId, 'active');
@@ -54,13 +57,20 @@ export function ActivateProductScreen({ navigation, route }: Props) {
           </View>
           <Text style={styles.heading}>Activate Product?</Text>
           <Text style={styles.subtitle}>
-            This product will become visible to customers and can receive orders immediately.
+            {product.status === 'pending'
+              ? 'This product is still awaiting admin approval. It will go live once approved.'
+              : product.status === 'rejected'
+              ? `This product was rejected${product.rejectionReason ? `: ${product.rejectionReason}` : ''}. It can't be activated until an admin approves it.`
+              : 'This product will become visible to customers and can receive orders immediately.'}
           </Text>
 
           <View style={styles.summaryCard}>
-            <View style={styles.summaryIcon}>
-              <Icon name="package" size={20} color={colors.textSecondary} />
-            </View>
+            <ProductThumb
+              imageUrl={product.images?.[0]}
+              style={styles.summaryIcon}
+              iconSize={20}
+              iconColor={colors.textSecondary}
+            />
             <View style={styles.summaryTextColumn}>
               <Text style={styles.summaryName}>{product.name}</Text>
               <Text style={styles.summaryMeta}>
@@ -89,7 +99,12 @@ export function ActivateProductScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.footer}>
-          <Button label="Yes, Activate Product" onPress={handleConfirm} loading={saving} disabled={saving} />
+          <Button
+            label="Yes, Activate Product"
+            onPress={handleConfirm}
+            loading={saving}
+            disabled={saving || awaitingApproval}
+          />
           <Button label="Cancel" variant="outline" onPress={() => navigation.goBack()} disabled={saving} />
         </View>
       </View>

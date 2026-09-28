@@ -23,17 +23,29 @@ export function TaxEditorScreen({ navigation, route }: Props) {
   const { productId } = route.params;
   const { products, updateProduct } = useProductCatalog();
   const product = products.find(item => item.id === productId);
-  const [gstRate, setGstRate] = useState(product?.gstRate ?? '5');
+  const [gstRate, setGstRate] = useState(String(Number(product?.gstRate ?? '0')));
   const [hsnCode, setHsnCode] = useState(product?.hsnCode ?? '');
   const [saving, setSaving] = useState(false);
 
-  if (!product) return null;
+  const [hsnError, setHsnError] = useState<string | undefined>();
+
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <PricingBackHeader title="Tax / GST" onBack={() => navigation.goBack()} />
+      </SafeAreaView>
+    );
+  }
 
   async function handleSave() {
     if (saving) return;
+    if (hsnCode.trim() && !/^\d{4,8}$/.test(hsnCode.trim())) {
+      setHsnError('HSN codes are 4 to 8 digits');
+      return;
+    }
     setSaving(true);
     try {
-      await updateProduct(productId, { gstRate, hsnCode, updatedAt: Date.now() });
+      await updateProduct(productId, { gstRate, hsnCode: hsnCode.trim() });
       navigation.replace('PriceUpdated', {
         productId,
         headline: 'Tax',
@@ -86,7 +98,17 @@ export function TaxEditorScreen({ navigation, route }: Props) {
 
         <View style={styles.fieldBlock}>
           <Text style={styles.label}>HSN Code</Text>
-          <TextInput value={hsnCode} onChangeText={setHsnCode} style={styles.input} keyboardType="number-pad" />
+          <TextInput
+            value={hsnCode}
+            onChangeText={text => {
+              setHsnCode(text.replace(/[^0-9]/g, ''));
+              setHsnError(undefined);
+            }}
+            style={styles.input}
+            keyboardType="number-pad"
+            maxLength={8}
+          />
+          {hsnError ? <Text style={styles.errorText}>{hsnError}</Text> : null}
         </View>
       </ScrollView>
 
@@ -98,6 +120,11 @@ export function TaxEditorScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    marginTop: spacing.xs,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: colors.white,

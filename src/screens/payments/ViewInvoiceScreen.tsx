@@ -1,23 +1,47 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { usePayments } from '../../context/PaymentsContext';
+import { useProfile } from '../../context/ProfileContext';
+import { getApiErrorMessage } from '../../services/api';
 import { Button, NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { colors, radii, shadows, spacing, typography } from '../../theme';
+import { buildInvoiceText, formatINRExact, formatSignedINRExact, settlementBreakdown } from './settlementHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ViewInvoice'>;
 
-function formatINR(amount: number) {
-  return `₹${Math.round(Math.abs(amount)).toLocaleString('en-IN')}`;
-}
-
 export function ViewInvoiceScreen({ navigation, route }: Props) {
   const { settlementId } = route.params;
-  const { getSettlement } = usePayments();
+  const { getSettlement, fetchSettlement } = usePayments();
+  const { profile } = useProfile();
   const settlement = getSettlement(settlementId);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settlement) return;
+    let cancelled = false;
+    fetchSettlement(settlementId).catch(err => {
+      if (!cancelled) setLoadError(getApiErrorMessage(err, 'Invoice not found for this settlement.'));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settlement, settlementId, fetchSettlement]);
+
+  async function handleShare() {
+    if (!settlement) return;
+    try {
+      await Share.share({ title: settlement.invoiceNumber, message: buildInvoiceText(settlement, profile) });
+    } catch (err) {
+      Alert.alert('Could not share invoice', err instanceof Error ? err.message : 'Please try again.');
+    }
+  }
+
+  const vendorName = profile.vendor.legalName || profile.storeName;
+  const breakdownRows = settlement ? settlementBreakdown(settlement) : [];
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -25,8 +49,14 @@ export function ViewInvoiceScreen({ navigation, route }: Props) {
 
       {!settlement ? (
         <View style={styles.notFound}>
-          <Icon name="file-text" size={32} color={colors.textTertiary} />
-          <Text style={styles.notFoundText}>Invoice not found for this settlement.</Text>
+          {loadError ? (
+            <>
+              <Icon name="file-text" size={32} color={colors.textTertiary} />
+              <Text style={styles.notFoundText}>{loadError}</Text>
+            </>
+          ) : (
+            <ActivityIndicator color={colors.primary} />
+          )}
         </View>
       ) : (
         <>
@@ -35,58 +65,48 @@ export function ViewInvoiceScreen({ navigation, route }: Props) {
               <View style={styles.cardHeader}>
                 <View>
                   <Text style={styles.brand}>Verdant</Text>
-                  <Text style={styles.brandSub}>Commerce Pvt. Ltd.</Text>
+                  <Text style={styles.brandSub}>Settlement {settlement.shortRef}</Text>
                 </View>
                 <View>
-                  <Text style={styles.taxInvoice}>TAX INVOICE</Text>
-                  <Text style={styles.invoiceNumber}>{settlement.id.replace('STL', 'INV')}</Text>
+                  <Text style={styles.taxInvoice}>INVOICE</Text>
+                  <Text style={styles.invoiceNumber}>{settlement.invoiceNumber}</Text>
                 </View>
               </View>
 
               <View style={styles.cardBody}>
                 <View style={styles.metaRow}>
-                  <Text style={styles.metaText}>
-                    Date: {settlement.transactionDate ?? settlement.dueDateLabel ?? '—'}
-                  </Text>
                   <Text style={styles.metaText}>Period: {settlement.dateRangeLabel}</Text>
+                  {settlement.transactionDateLabel ? (
+                    <Text style={styles.metaText}>Paid: {settlement.transactionDateLabel}</Text>
+                  ) : null}
                 </View>
 
                 <View style={styles.billedToBox}>
                   <Text style={styles.billedToLabel}>BILLED TO</Text>
-                  <Text style={styles.billedToName}>Sharma Grocery Store</Text>
-                  <Text style={styles.billedToGst}>GSTIN: 27AAACS0564Q1ZA</Text>
+                  <Text style={styles.billedToName}>{vendorName}</Text>
+                  {profile.vendor.gstNumber ? (
+                    <Text style={styles.billedToGst}>GSTIN: {profile.vendor.gstNumber}</Text>
+                  ) : null}
+                  {profile.vendor.registeredAddress ? (
+                    <Text style={styles.billedToGst}>{profile.vendor.registeredAddress}</Text>
+                  ) : null}
                 </View>
 
                 <View style={styles.lineItemsBox}>
-                  <View style={[styles.lineItemRow, styles.lineItemDivider]}>
-                    <Text style={styles.lineItemLabel}>Gross Sales</Text>
-                    <Text style={styles.lineItemValue}>{formatINR(settlement.grossSales)}</Text>
-                  </View>
-                  <View style={[styles.lineItemRow, styles.lineItemDivider]}>
-                    <Text style={styles.lineItemLabel}>Returns</Text>
-                    <Text style={styles.lineItemValue}>-{formatINR(settlement.returns)}</Text>
-                  </View>
-                  <View style={[styles.lineItemRow, styles.lineItemDivider]}>
-                    <Text style={styles.lineItemLabel}>
-                      Platform Commission ({settlement.commissionRate}%)
-                    </Text>
-                    <Text style={styles.lineItemValue}>-{formatINR(settlement.commission)}</Text>
-                  </View>
-                  <View style={styles.lineItemRow}>
-                    <Text style={styles.lineItemLabel}>GST on Commission (18%)</Text>
-                    <Text style={styles.lineItemValue}>-{formatINR(settlement.gstOnCommission)}</Text>
-                  </View>
+                  {breakdownRows.map((row, index) => (
+                    <View
+                      key={row.key}
+                      style={[styles.lineItemRow, index < breakdownRows.length - 1 && styles.lineItemDivider]}
+                    >
+                      <Text style={styles.lineItemLabel}>{row.label}</Text>
+                      <Text style={styles.lineItemValue}>{formatSignedINRExact(row.amount)}</Text>
+                    </View>
+                  ))}
                 </View>
 
                 <View style={styles.netPayoutRow}>
                   <Text style={styles.netPayoutLabel}>Net Payout</Text>
-                  <Text style={styles.netPayoutValue}>{formatINR(settlement.netPayout)}</Text>
-                </View>
-
-                <View style={styles.qrWrap}>
-                  <View style={styles.qrBox}>
-                    <Text style={styles.qrText}>QR Code</Text>
-                  </View>
+                  <Text style={styles.netPayoutValue}>{formatINRExact(settlement.netPayout)}</Text>
                 </View>
               </View>
             </View>
@@ -94,9 +114,9 @@ export function ViewInvoiceScreen({ navigation, route }: Props) {
 
           <View style={styles.footer}>
             <Button
-              label="Download PDF"
-              icon={<Icon name="file-text" size={18} color={colors.white} />}
-              onPress={() => navigation.navigate('DownloadInvoice', { settlementId })}
+              label="Share Invoice"
+              icon={<Icon name="share" size={18} color={colors.white} />}
+              onPress={handleShare}
             />
           </View>
         </>
@@ -221,6 +241,7 @@ const styles = StyleSheet.create({
   lineItemLabel: {
     ...typography.caption,
     color: colors.textSecondary,
+    flex: 1,
   },
   lineItemValue: {
     ...typography.captionSemibold,
@@ -247,26 +268,6 @@ const styles = StyleSheet.create({
     ...typography.bodySemibold,
     fontWeight: '800',
     color: colors.primary,
-  },
-  qrWrap: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-  },
-  qrBox: {
-    width: 72,
-    height: 72,
-    borderRadius: radii.sm,
-    borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qrText: {
-    ...typography.tiny,
-    fontSize: 9,
-    color: colors.textSecondary,
-    textAlign: 'center',
   },
   footer: {
     paddingHorizontal: spacing.xl,

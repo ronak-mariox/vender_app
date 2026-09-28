@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
@@ -12,6 +12,7 @@ import {
   type StoreStatusValue,
 } from '../../context/StoreSetupContext';
 import { api, getApiErrorMessage } from '../../services/api';
+import { parseShortDate, useFinishStoreSetup } from './storeSetupHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StoreStatus'>;
@@ -37,25 +38,13 @@ const SHORT_TO_LONG_DAY: Record<string, string> = {
   Sat: 'Saturday',
   Sun: 'Sunday',
 };
-const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function parseHolidayDate(display: string): Date | null {
-  const parts = display.trim().split(' ');
-  if (parts.length !== 3) return null;
-  const day = parseInt(parts[0], 10);
-  const monthIndex = MONTH_ABBR.indexOf(parts[1]);
-  const year = parseInt(parts[2], 10);
-  if (!Number.isInteger(day) || monthIndex === -1 || !Number.isInteger(year)) return null;
-  return new Date(year, monthIndex, day);
-}
-
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 function findActiveHoliday(holidays: HolidayClosureItem[], today: Date): HolidayClosureItem | undefined {
   return holidays.find(holiday => {
-    const start = parseHolidayDate(holiday.date);
+    const start = parseShortDate(holiday.date);
     if (!start) return false;
     for (let offset = 0; offset < holiday.daysClosed; offset += 1) {
       const day = new Date(start);
@@ -101,7 +90,12 @@ function getTodaysScheduleSummary(
 
 export function StoreStatusScreen({ navigation }: Props) {
   const { data, setStoreStatus } = useStoreSetup();
+  const finishSetup = useFinishStoreSetup(navigation);
   const [selected, setSelected] = useState<StoreStatusValue>(data.storeStatus);
+
+  useEffect(() => {
+    setSelected(data.storeStatus);
+  }, [data.storeStatus]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const schedule = useMemo(
@@ -117,19 +111,22 @@ export function StoreStatusScreen({ navigation }: Props) {
   }
 
   async function handleContinue() {
-    if (selected === 'temporarily-closed') {
-      // Already saved via ClosureConfirmationScreen -> PATCH /temp-closure.
-      navigation.navigate('StoreSetupComplete');
+    if (selected === 'temporarily-closed' && !data.tempClosure) {
+      navigation.navigate('TempClosure');
       return;
     }
     setSaving(true);
     setError(undefined);
     try {
-      await api.patch('/vendor/store-setup/status', { storeStatus: selected });
+      if (selected === 'temporarily-closed' && data.tempClosure) {
+        await api.patch('/vendor/store-setup/temp-closure', data.tempClosure);
+      } else {
+        await api.patch('/vendor/store-setup/status', { storeStatus: selected });
+      }
       setStoreStatus(selected);
-      navigation.navigate('StoreSetupComplete');
+      await finishSetup();
     } catch (err) {
-      setError(getApiErrorMessage(err));
+      setError(getApiErrorMessage(err, 'Could not save your store status. Please try again.'));
     } finally {
       setSaving(false);
     }
@@ -182,7 +179,7 @@ export function StoreStatusScreen({ navigation }: Props) {
 
         <InfoBanner
           variant="success"
-          message="Status changes based on your schedule. You can override it manually anytime from the Dashboard."
+          message="You can change your store status again later."
         />
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}

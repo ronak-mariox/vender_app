@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon, IconName } from '../icons/Icon';
 import { radii, spacing, typography } from '../theme';
 
@@ -10,17 +10,22 @@ type Props = {
   color: string;
   background: string;
   iconBackground: string;
+  onPress?: () => void;
 };
 
-export function PipelineTile({ icon, value, label, color, background, iconBackground }: Props) {
+export function PipelineTile({ icon, value, label, color, background, iconBackground, onPress }: Props) {
   return (
-    <View style={[styles.tile, { backgroundColor: background, borderColor: `${color}22` }]}>
+    <Pressable
+      style={[styles.tile, { backgroundColor: background, borderColor: `${color}22` }]}
+      onPress={onPress}
+      disabled={!onPress}
+    >
       <View style={[styles.iconWrapper, { backgroundColor: iconBackground }]}>
         <Icon name={icon} size={14} color={color} />
       </View>
       <Text style={[styles.value, { color }]}>{value}</Text>
       <Text style={[styles.label, { color }]}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 

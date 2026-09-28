@@ -1,19 +1,20 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, NavHeader, ScreenContainer } from '../../components';
-import { Icon } from '../../icons/Icon';
+import { NavHeader, ScreenContainer } from '../../components';
 import { useAnalytics } from '../../context/AnalyticsContext';
 import { useInventory } from '../../context/InventoryContext';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
-import { AnalyticsFilterBar, AnalyticsPeriod } from './AnalyticsFilterBar';
+import { AnalyticsFilterBar } from './AnalyticsFilterBar';
+import { formatINR } from './analyticsHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'InventoryPerformance'>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BAR_MAX_HEIGHT = 72;
+const SELLABLE_STATUSES = new Set(['active', 'low-stock', 'out-of-stock']);
 
 function healthColor(percent: number): string {
   if (percent >= 70) return colors.primary;
@@ -22,7 +23,7 @@ function healthColor(percent: number): string {
 }
 
 export function InventoryPerformanceScreen({ navigation }: Props) {
-  const { inventoryPerformance, period, setPeriod } = useAnalytics();
+  const { inventoryPerformance, periodLabel } = useAnalytics();
   const { products } = useProductCatalog();
   const { eventsForProduct } = useInventory();
 
@@ -36,6 +37,7 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
   const categoryHealth = useMemo(() => {
     const map = new Map<string, { name: string; total: number; healthy: number }>();
     products.forEach(product => {
+      if (!SELLABLE_STATUSES.has(product.status)) return;
       const entry = map.get(product.categoryId) ?? { name: product.categoryName, total: 0, healthy: 0 };
       entry.total += 1;
       if (product.status === 'active') entry.healthy += 1;
@@ -50,7 +52,7 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
   const frequentlyOutOfStock = useMemo(() => {
     const now = Date.now();
     return products
-      .filter(product => product.stock === 0)
+      .filter(product => product.status === 'out-of-stock')
       .map(product => {
         const events = eventsForProduct(product.id);
         const zeroEvent = events.find(event => event.afterStock === 0);
@@ -78,7 +80,7 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.filterWrap}>
-          <AnalyticsFilterBar value={period} onChange={setPeriod} />
+          <AnalyticsFilterBar />
         </View>
 
         <View style={styles.pillsRow}>
@@ -99,8 +101,9 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Stock Health by Category</Text>
           <View style={styles.barChart}>
-            {categoryHealth.map(category => (
-              <View key={category.name} style={styles.barColumn}>
+            {categoryHealth.length === 0 ? <Text style={styles.emptyText}>No live products yet</Text> : null}
+            {categoryHealth.map((category, index) => (
+              <View key={`${category.name}-${index}`} style={styles.barColumn}>
                 <View
                   style={[
                     styles.bar,
@@ -111,7 +114,7 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
                   ]}
                 />
                 <Text style={styles.barLabel} numberOfLines={1}>
-                  {category.name}
+                  {category.name || 'Other'}
                 </Text>
               </View>
             ))}
@@ -121,7 +124,7 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
         <View style={styles.statsCardWrap}>
           <View style={styles.statsCard}>
             <View style={styles.statBlock}>
-              <Text style={styles.statLabel}>Stockout Incidents</Text>
+              <Text style={styles.statLabel}>Stock-related Cancels</Text>
               <Text style={[styles.statValue, { color: colors.error }]}>
                 {inventoryPerformance.stockoutIncidents}
               </Text>
@@ -131,13 +134,15 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
             </View>
             <View style={styles.statBlock}>
               <Text style={styles.statLabel}>Avg Days to Sell Out</Text>
-              <Text style={styles.statValue}>{inventoryPerformance.avgDaysToSellOut} days</Text>
+              <Text style={styles.statValue}>
+                {inventoryPerformance.avgDaysToSellOut === null ? '—' : `${inventoryPerformance.avgDaysToSellOut} days`}
+              </Text>
             </View>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Frequently Out of Stock</Text>
+          <Text style={styles.sectionTitle}>Currently Out of Stock</Text>
           <View style={styles.productList}>
             {frequentlyOutOfStock.length === 0 ? (
               <Text style={styles.emptyText}>No products currently out of stock</Text>
@@ -161,11 +166,19 @@ export function InventoryPerformanceScreen({ navigation }: Props) {
         </View>
 
         <View style={[styles.section, styles.lastSection]}>
-          <Button
-            label="Set Low Stock Alerts"
-            icon={<Icon name="bell" size={16} color={colors.white} />}
-            onPress={() => Alert.alert('Set Low Stock Alerts', 'Coming soon.')}
-          />
+          <View style={styles.productList}>
+            <View style={styles.productRow}>
+              <Text style={styles.productName}>Turnover · {periodLabel}</Text>
+              <Text style={styles.productDays}>{inventoryPerformance.turnoverRate}×</Text>
+            </View>
+            <View style={[styles.productRow, styles.productRowLast]}>
+              <Text style={styles.productName}>
+                Unsold stock value ({inventoryPerformance.deadStockCount} product
+                {inventoryPerformance.deadStockCount === 1 ? '' : 's'})
+              </Text>
+              <Text style={styles.productDays}>{formatINR(inventoryPerformance.deadStockValue)}</Text>
+            </View>
+          </View>
         </View>
       </ScrollView>
     </ScreenContainer>

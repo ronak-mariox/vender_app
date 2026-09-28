@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
+import { useVendorAuth } from './VendorAuthContext';
 
 export type StoreProfileData = {
   storeName: string;
@@ -152,27 +153,29 @@ interface ApiStoreSetup {
   tempClosure: TempClosureData | null;
 }
 
-function fromApi(api: ApiStoreSetup): StoreSetupData {
+function fromApi(remote: ApiStoreSetup): StoreSetupData {
   return {
-    profile: api.storeProfile ?? undefined,
-    logoUploaded: Boolean(api.storeLogoUrl),
-    logoUrl: api.storeLogoUrl ?? undefined,
-    coverImageUploaded: Boolean(api.storeCoverImageUrl),
-    coverImageUrl: api.storeCoverImageUrl ?? undefined,
-    address: api.storeSetupAddress ?? undefined,
-    operatingHours: api.operatingHours ?? undefined,
-    holidays: api.holidays ?? [],
-    delivery: api.deliverySettings ?? undefined,
-    serviceAvailability: api.serviceAvailability ?? undefined,
-    storeStatus: api.storeStatus,
-    tempClosure: api.tempClosure ?? undefined,
-    setupCompletedAt: api.storeSetupCompletedAt,
+    profile: remote.storeProfile ?? undefined,
+    logoUploaded: Boolean(remote.storeLogoUrl),
+    logoUrl: remote.storeLogoUrl ?? undefined,
+    coverImageUploaded: Boolean(remote.storeCoverImageUrl),
+    coverImageUrl: remote.storeCoverImageUrl ?? undefined,
+    address: remote.storeSetupAddress ?? undefined,
+    operatingHours: remote.operatingHours ?? undefined,
+    holidays: remote.holidays ?? [],
+    delivery: remote.deliverySettings ?? undefined,
+    serviceAvailability: remote.serviceAvailability ?? undefined,
+    storeStatus: remote.storeStatus,
+    tempClosure: remote.tempClosure ?? undefined,
+    setupCompletedAt: remote.storeSetupCompletedAt,
   };
 }
 
 export function StoreSetupProvider({ children }: { children: React.ReactNode }) {
+  const { vendor } = useVendorAuth();
+  const vendorId = vendor?.id ?? null;
   const [data, setData] = useState<StoreSetupData>(EMPTY_DATA);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   // StoreSetupContext previously never talked to the backend at all — every field
   // (profile, logo/cover, address, hours, delivery, availability, status) only ever
@@ -192,9 +195,20 @@ export function StoreSetupProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   useEffect(() => {
+    if (!vendorId) {
+      setData(EMPTY_DATA);
+      setIsLoading(false);
+      return;
+    }
+    let cancelled = false;
     setIsLoading(true);
-    refresh().finally(() => setIsLoading(false));
-  }, [refresh]);
+    refresh().finally(() => {
+      if (!cancelled) setIsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId, refresh]);
 
   const updateProfile = useCallback((value: StoreProfileData) => {
     setData(prev => ({ ...prev, profile: value }));

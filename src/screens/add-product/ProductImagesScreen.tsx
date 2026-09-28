@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { AddProductHeader, Button, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { ADD_PRODUCT_TOTAL_STEPS, useProductDraft } from '../../context/ProductDraftContext';
 import { pickAndUploadProductImage } from '../../services/productImageUpload';
 import { getApiErrorMessage } from '../../services/api';
 import { resolveAssetUrl } from '../../utils/resolveAssetUrl';
@@ -79,7 +79,7 @@ export function ProductImagesScreen({ navigation }: Props) {
         title="Product Images"
         currentStep={2}
         onBack={() => navigation.goBack()}
-        onSaveDraft={() => navigation.navigate('ProductCatalog')}
+        totalSteps={ADD_PRODUCT_TOTAL_STEPS}
       />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.intro}>

@@ -1,27 +1,16 @@
 import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, NavHeader, ScreenContainer } from '../../components';
 import { DetailCard, DetailRow } from './DetailCard';
 import { NotificationHero } from './NotificationHero';
-import { NOTIFICATION_CATEGORY_META } from './notificationMeta';
+import { getNotificationMeta } from './notificationMeta';
 import { useNotifications } from '../../context/NotificationsContext';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'LowStockNotification'>;
-
-const FALLBACK_PRODUCT_NAME = 'Amul Gold Milk 1L';
-const FALLBACK_STOCK = 8;
-const FALLBACK_REORDER = 10;
-const FALLBACK_MAX = 50;
-
-function parseLeadingNumber(text?: string): number | undefined {
-  if (!text) return undefined;
-  const match = text.match(/\d+/);
-  return match ? Number(match[0]) : undefined;
-}
 
 export function LowStockNotificationScreen({ navigation, route }: Props) {
   const { notificationId } = route.params;
@@ -29,8 +18,8 @@ export function LowStockNotificationScreen({ navigation, route }: Props) {
   const { products } = useProductCatalog();
 
   const notification = getNotification(notificationId);
-  const matchedProduct = notification?.productName
-    ? products.find(product => product.name === notification.productName)
+  const matchedProduct = notification?.productId
+    ? products.find(product => product.id === notification.productId)
     : undefined;
 
   if (!notification) {
@@ -44,12 +33,11 @@ export function LowStockNotificationScreen({ navigation, route }: Props) {
     );
   }
 
-  const meta = NOTIFICATION_CATEGORY_META[notification.category];
-  const productName = matchedProduct?.name ?? notification.productName ?? FALLBACK_PRODUCT_NAME;
-  const currentStock = matchedProduct?.stock ?? parseLeadingNumber(notification.subtitle) ?? FALLBACK_STOCK;
-  const reorderThreshold = matchedProduct?.reorderLevel ?? FALLBACK_REORDER;
-  const maxCapacity = matchedProduct?.maxStock ?? FALLBACK_MAX;
-  const stockRatio = Math.min(1, Math.max(0, maxCapacity > 0 ? currentStock / maxCapacity : 0));
+  const meta = getNotificationMeta(notification.category);
+  const productName = matchedProduct?.name ?? notification.productName;
+  const maxCapacity = matchedProduct?.maxStock ?? 0;
+  const stockRatio =
+    matchedProduct && maxCapacity > 0 ? Math.min(1, Math.max(0, matchedProduct.stock / maxCapacity)) : null;
   const otherLowStockCount = products.filter(
     product => product.status === 'low-stock' && product.id !== matchedProduct?.id,
   ).length;
@@ -58,12 +46,8 @@ export function LowStockNotificationScreen({ navigation, route }: Props) {
     if (matchedProduct) {
       navigation.navigate('UpdateQuantity', { productId: matchedProduct.id });
     } else {
-      Alert.alert('Product not found', `We couldn't find "${productName}" in your catalog.`);
+      navigation.navigate('LowStock');
     }
-  }
-
-  function handleSetThreshold() {
-    Alert.alert('Set Alert Threshold', 'Threshold settings are not available yet.');
   }
 
   return (
@@ -78,28 +62,36 @@ export function LowStockNotificationScreen({ navigation, route }: Props) {
         timeLabel={notification.timeLabel}
       />
       <View style={styles.content}>
-        <DetailCard>
-          <DetailRow label="Product" value={productName} />
-          <DetailRow label="Current Stock" value={`${currentStock} units`} />
-          <DetailRow label="Reorder Threshold" value={`${reorderThreshold} units`} />
-          <DetailRow label="Max Capacity" value={`${maxCapacity} units`} />
-          <View style={styles.stockLevelBlock}>
-            <View style={styles.stockLevelRow}>
-              <Text style={styles.stockLevelLabel}>Stock level</Text>
-              <Text style={[styles.stockLevelValue, { color: meta.accentColor }]}>
-                {currentStock} / {maxCapacity} units
-              </Text>
-            </View>
-            <View style={styles.progressTrack}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${stockRatio * 100}%`, backgroundColor: meta.accentColor },
-                ]}
-              />
-            </View>
-          </View>
-        </DetailCard>
+        {matchedProduct ? (
+          <DetailCard>
+            <DetailRow label="Product" value={matchedProduct.name} />
+            <DetailRow label="Current Stock" value={`${matchedProduct.stock} units`} />
+            <DetailRow label="Reorder Threshold" value={`${matchedProduct.reorderLevel} units`} />
+            {maxCapacity > 0 ? <DetailRow label="Max Capacity" value={`${maxCapacity} units`} /> : null}
+            {stockRatio !== null ? (
+              <View style={styles.stockLevelBlock}>
+                <View style={styles.stockLevelRow}>
+                  <Text style={styles.stockLevelLabel}>Stock level</Text>
+                  <Text style={[styles.stockLevelValue, { color: meta.accentColor }]}>
+                    {matchedProduct.stock} / {maxCapacity} units
+                  </Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${stockRatio * 100}%`, backgroundColor: meta.accentColor },
+                    ]}
+                  />
+                </View>
+              </View>
+            ) : null}
+          </DetailCard>
+        ) : (
+          <Text style={styles.emptyText}>
+            {productName ? `"${productName}" is no longer in your catalog.` : 'This product is no longer in your catalog.'}
+          </Text>
+        )}
 
         {otherLowStockCount > 0 ? (
           <Pressable onPress={() => navigation.navigate('LowStock')} hitSlop={8}>
@@ -114,7 +106,7 @@ export function LowStockNotificationScreen({ navigation, route }: Props) {
             <Button label="Update Stock" onPress={handleUpdateStock} />
           </View>
           <View style={styles.footerButton}>
-            <Button label="Set Alert Threshold" variant="outline" onPress={handleSetThreshold} />
+            <Button label="Alert Settings" variant="outline" onPress={() => navigation.navigate('LowStockAlert')} />
           </View>
         </View>
       </View>

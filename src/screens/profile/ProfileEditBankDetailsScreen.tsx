@@ -6,6 +6,7 @@ import { Button, Input, NavHeader, ScreenContainer, SegmentedControl } from '../
 import { Icon } from '../../icons/Icon';
 import { useProfile } from '../../context/ProfileContext';
 import { isRequired, isValidIFSC, type FormErrors } from '../../utils/validators';
+import { getApiErrorMessage, getFieldErrors } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileEditBankDetails'>;
@@ -59,8 +60,14 @@ export function ProfileEditBankDetailsScreen({ navigation }: Props) {
         upiId: upiId.trim() || undefined,
       });
       navigation.goBack();
-    } catch {
-      setErrors({ form: 'Could not submit your request — please check your connection and try again.' });
+    } catch (err) {
+      const fieldErrors = getFieldErrors(err);
+      setErrors({
+        accountHolderName: fieldErrors.accountHolderName,
+        accountNumber: fieldErrors.accountNumber,
+        ifsc: fieldErrors.ifsc,
+        form: getApiErrorMessage(err, 'Could not submit your request.'),
+      });
     } finally {
       setIsSaving(false);
     }

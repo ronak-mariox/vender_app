@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api } from '../services/api';
+import { api, getApiErrorMessage, unwrapList } from '../services/api';
+import { useVendorAuth } from './VendorAuthContext';
 
 export type ProductStatus =
   | 'active'
@@ -19,6 +20,7 @@ export type ProductVariantSummary = {
   mrp: number;
   sellingPrice: number;
   isPrimary: boolean;
+  stock: number;
 };
 
 export type Product = {
@@ -31,6 +33,7 @@ export type Product = {
   subcategoryName: string;
   mrp: number;
   sellingPrice: number;
+  /** Total units across all variants. */
   stock: number;
   reorderLevel: number;
   maxStock: number;
@@ -45,28 +48,98 @@ export type Product = {
   galleryCount?: number;
   images?: string[];
   variants?: ProductVariantSummary[];
+  rejectionReason?: string;
+  createdAt?: number;
   updatedAt?: number;
 };
+
+export type CatalogSort = 'newest' | 'oldest' | 'name' | 'price-asc' | 'price-desc' | 'stock-asc';
+
+export type CatalogFilters = {
+  sort: CatalogSort;
+  statuses: ProductStatus[];
+  categoryIds: string[];
+};
+
+export const DEFAULT_CATALOG_FILTERS: CatalogFilters = { sort: 'newest', statuses: [], categoryIds: [] };
+
+export const CATALOG_SORT_LABELS: Record<CatalogSort, string> = {
+  newest: 'Newest First',
+  oldest: 'Oldest First',
+  name: 'Name A–Z',
+  'price-asc': 'Price: Low to High',
+  'price-desc': 'Price: High to Low',
+  'stock-asc': 'Stock: Low to High',
+};
+
+export function applyCatalogFilters(products: Product[], filters: CatalogFilters): Product[] {
+  const filtered = products.filter(
+    product =>
+      (filters.statuses.length === 0 || filters.statuses.includes(product.status)) &&
+      (filters.categoryIds.length === 0 || filters.categoryIds.includes(product.categoryId)),
+  );
+  const sorted = [...filtered];
+  switch (filters.sort) {
+    case 'oldest':
+      sorted.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+      break;
+    case 'name':
+      sorted.sort((a, b) => a.name.localeCompare(b.name));
+      break;
+    case 'price-asc':
+      sorted.sort((a, b) => a.sellingPrice - b.sellingPrice);
+      break;
+    case 'price-desc':
+      sorted.sort((a, b) => b.sellingPrice - a.sellingPrice);
+      break;
+    case 'stock-asc':
+      sorted.sort((a, b) => a.stock - b.stock);
+      break;
+    default:
+      sorted.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }
+  return sorted;
+}
 
 /**
  * Determines what unit/variant input the add-product flow shows for a category —
  * weight_volume for grocery-style g/kg/ml, attribute for discrete options like
- * clothing sizes or storage capacities. Configured admin-side per category.
+ * clothing sizes or storage capacities, none for items sold as a single piece.
+ * Configured admin-side per category.
  */
 export type CategoryVariantConfig = {
-  kind: 'weight_volume' | 'attribute';
+  kind: 'weight_volume' | 'attribute' | 'none';
   label: string;
   units?: string[];
   options?: string[];
+  /** The vendor may type a value that isn't in `options`. */
+  allowCustom?: boolean;
+};
+
+type VariantConfigFields = {
+  variantConfig?: CategoryVariantConfig;
+  /** Every variant type allowed here; the vendor picks one per product. */
+  variantConfigs?: CategoryVariantConfig[];
 };
 
 /** A category as returned by `GET /vendor/categories`. */
-export type VendorCategory = {
+export type VendorCategory = VariantConfigFields & {
   id: string;
   name: string;
-  subcategories: { id: string; name: string; variantConfig?: CategoryVariantConfig }[];
-  variantConfig?: CategoryVariantConfig;
+  subcategories: ({ id: string; name: string } & VariantConfigFields)[];
 };
+
+function ownVariantConfigs(source?: VariantConfigFields): CategoryVariantConfig[] {
+  if (source?.variantConfigs?.length) return source.variantConfigs;
+  return source?.variantConfig ? [source.variantConfig] : [];
+}
+
+/** A subcategory's own variant types override its category's; an empty result means "use the default pack-size input". */
+export function resolveVariantConfigs(category?: VendorCategory, subcategoryId?: string): CategoryVariantConfig[] {
+  const subcategory = category?.subcategories.find(sub => sub.id === subcategoryId);
+  const own = ownVariantConfigs(subcategory);
+  return own.length > 0 ? own : ownVariantConfigs(category);
+}
 
 // ---------------------------------------------------------------------------
 // Backend (API) shapes — these mirror the vendor products/categories contract.
@@ -86,8 +159,10 @@ type ApiCategory = {
     imageUrl?: string;
     isActive: boolean;
     variantConfig?: CategoryVariantConfig;
+    variantConfigs?: CategoryVariantConfig[];
   }[];
   variantConfig?: CategoryVariantConfig;
+  variantConfigs?: CategoryVariantConfig[];
 };
 
 type ApiVariant = {
@@ -177,7 +252,7 @@ function mapProduct(apiProduct: ApiProduct, categories: ApiCategory[]): Product 
   const variant = primaryVariant(apiProduct.variants);
   const category = categories.find(item => item.id === apiProduct.categoryId);
   const subcategory = category?.subcategories.find(item => item.id === apiProduct.subcategoryId);
-  const stock = variant?.stock ?? 0;
+  const stock = apiProduct.variants.reduce((sum, item) => sum + (item.stock ?? 0), 0);
 
   return {
     id: apiProduct.id,
@@ -208,7 +283,10 @@ function mapProduct(apiProduct: ApiProduct, categories: ApiCategory[]): Product 
       mrp: item.mrp,
       sellingPrice: item.price,
       isPrimary: !!item.isPrimary,
+      stock: item.stock,
     })),
+    rejectionReason: apiProduct.rejectionReason,
+    createdAt: apiProduct.createdAt ? new Date(apiProduct.createdAt).getTime() : undefined,
     updatedAt: apiProduct.updatedAt ? new Date(apiProduct.updatedAt).getTime() : undefined,
   };
 }
@@ -255,7 +333,10 @@ type ProductCatalogContextValue = {
   products: Product[];
   categories: VendorCategory[];
   loading: boolean;
+  error: string | null;
   refreshProducts: () => Promise<void>;
+  catalogFilters: CatalogFilters;
+  setCatalogFilters: (filters: CatalogFilters) => void;
   addProduct: (input: CreateProductInput) => Promise<Product>;
   setProductStatus: (id: string, status: ProductStatus) => Promise<void>;
   removeProduct: (id: string) => Promise<void>;
@@ -265,34 +346,54 @@ type ProductCatalogContextValue = {
 const ProductCatalogContext = createContext<ProductCatalogContextValue | null>(null);
 
 export function ProductCatalogProvider({ children }: { children: React.ReactNode }) {
+  const { vendor } = useVendorAuth();
+  const vendorId = vendor?.id ?? null;
   const [rawProducts, setRawProducts] = useState<ApiProduct[]>([]);
   const [rawCategories, setRawCategories] = useState<ApiCategory[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogFilters>(DEFAULT_CATALOG_FILTERS);
 
   const loadAll = useCallback(async () => {
     const [productsRes, categoriesRes] = await Promise.all([
-      api.get<ApiProduct[]>('/vendor/products'),
-      api.get<ApiCategory[]>('/vendor/categories'),
+      api.get('/vendor/products'),
+      api.get('/vendor/categories'),
     ]);
-    setRawProducts(productsRes.data);
-    setRawCategories(categoriesRes.data);
+    setRawProducts(unwrapList<ApiProduct>(productsRes.data));
+    setRawCategories(unwrapList<ApiCategory>(categoriesRes.data));
+    setError(null);
   }, []);
 
   useEffect(() => {
+    if (!vendorId) {
+      setRawProducts([]);
+      setRawCategories([]);
+      setError(null);
+      setLoading(false);
+      setCatalogFilters(DEFAULT_CATALOG_FILTERS);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     loadAll()
-      .catch(() => undefined)
+      .catch(err => {
+        if (!cancelled) setError(getApiErrorMessage(err));
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [loadAll]);
+  }, [vendorId, loadAll]);
 
   const refreshProducts = useCallback(async () => {
-    await loadAll();
+    try {
+      await loadAll();
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+      throw err;
+    }
   }, [loadAll]);
 
   const products = useMemo(
@@ -309,8 +410,10 @@ export function ProductCatalogProvider({ children }: { children: React.ReactNode
           id: sub.id,
           name: sub.name,
           variantConfig: sub.variantConfig,
+          variantConfigs: sub.variantConfigs,
         })),
         variantConfig: category.variantConfig,
+        variantConfigs: category.variantConfigs,
       })),
     [rawCategories],
   );
@@ -375,8 +478,31 @@ export function ProductCatalogProvider({ children }: { children: React.ReactNode
   }, []);
 
   const value = useMemo(
-    () => ({ products, categories, loading, refreshProducts, addProduct, setProductStatus, removeProduct, updateProduct }),
-    [products, categories, loading, refreshProducts, addProduct, setProductStatus, removeProduct, updateProduct],
+    () => ({
+      products,
+      categories,
+      loading,
+      error,
+      refreshProducts,
+      catalogFilters,
+      setCatalogFilters,
+      addProduct,
+      setProductStatus,
+      removeProduct,
+      updateProduct,
+    }),
+    [
+      products,
+      categories,
+      loading,
+      error,
+      refreshProducts,
+      catalogFilters,
+      addProduct,
+      setProductStatus,
+      removeProduct,
+      updateProduct,
+    ],
   );
 
   return <ProductCatalogContext.Provider value={value}>{children}</ProductCatalogContext.Provider>;

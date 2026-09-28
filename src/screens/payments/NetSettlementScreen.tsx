@@ -1,57 +1,52 @@
-import React, { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ScreenContainer } from '../../components';
 import { usePayments } from '../../context/PaymentsContext';
 import { colors, radii, spacing, typography } from '../../theme';
-import { PeriodFilterBar, PaymentsPeriod } from './PeriodFilterBar';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import { formatINR, sumBy } from './settlementHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'NetSettlement'>;
 
-function formatINR(value: number): string {
-  return `₹${Math.round(Math.abs(value)).toLocaleString('en-IN')}`;
-}
+export function NetSettlementScreen({ navigation }: Props) {
+  const { filteredSettlements, periodLabel } = usePayments();
 
-export function NetSettlementScreen({ navigation, route }: Props) {
-  const { settlementId } = route.params;
-  const { getSettlement } = usePayments();
-  const settlement = getSettlement(settlementId);
-  const [period, setPeriod] = useState<PaymentsPeriod>('month');
+  const totals = useMemo(
+    () => ({
+      gross: sumBy(filteredSettlements, s => s.grossSales),
+      returns: sumBy(filteredSettlements, s => s.returns),
+      commission: sumBy(filteredSettlements, s => s.commission),
+      gst: sumBy(filteredSettlements, s => s.gstOnCommission),
+      adjustments: sumBy(filteredSettlements, s => s.adjustments),
+      net: sumBy(filteredSettlements, s => s.netPayout),
+    }),
+    [filteredSettlements],
+  );
+  const bankAccountLabel = filteredSettlements.find(s => s.bankAccountLabel)?.bankAccountLabel;
 
-  if (!settlement) {
-    return (
-      <ScreenContainer scrollable={false} backgroundColor={colors.white}>
-        <NavHeader title="Net Settlement" onBack={() => navigation.goBack()} />
-        <View style={styles.notFound}>
-          <Text style={styles.notFoundText}>Settlement not found</Text>
-        </View>
-      </ScreenContainer>
-    );
-  }
-
-  const totalDeductions = settlement.grossSales - settlement.netPayout;
-  const netRatio = settlement.grossSales > 0 ? settlement.netPayout / settlement.grossSales : 1;
+  const totalDeductions = Math.max(0, totals.gross - totals.net);
+  const netRatio = totals.gross > 0 ? totals.net / totals.gross : 1;
   const netFlex = Math.max(netRatio, 0.001);
   const deductionFlex = Math.max(1 - netRatio, 0.001);
   const hasDeductions = totalDeductions > 0;
-
-  function handleUpdateBank() {
-    Alert.alert('Coming soon', 'Updating bank account details will be available soon.');
-  }
 
   return (
     <ScreenContainer scrollable={false} backgroundColor={colors.white}>
       <NavHeader title="Net Settlement" onBack={() => navigation.goBack()} />
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.filterBarWrap}>
-          <PeriodFilterBar value={period} onChange={setPeriod} />
+          <PeriodFilterBar />
         </View>
 
         <View style={styles.heroBlock}>
-          <Text style={styles.heroLabel}>Net Payout</Text>
-          <Text style={styles.heroAmount}>{formatINR(settlement.netPayout)}</Text>
-          <Text style={styles.heroSublabel}>of {formatINR(settlement.grossSales)} gross sales</Text>
+          <Text style={styles.heroLabel}>Net Payout · {periodLabel}</Text>
+          <Text style={styles.heroAmount}>{formatINR(totals.net)}</Text>
+          <Text style={styles.heroSublabel}>
+            of {formatINR(totals.gross)} gross sales across {filteredSettlements.length} settlement
+            {filteredSettlements.length === 1 ? '' : 's'}
+          </Text>
         </View>
 
         <View style={styles.breakdownCard}>
@@ -59,7 +54,7 @@ export function NetSettlementScreen({ navigation, route }: Props) {
           <View style={styles.barTrack}>
             <View style={[styles.barSegmentNet, { flex: netFlex }]}>
               <Text style={styles.barSegmentNetText} numberOfLines={1}>
-                Net {formatINR(settlement.netPayout)}
+                Net {formatINR(totals.net)}
               </Text>
             </View>
             {hasDeductions ? (
@@ -74,33 +69,31 @@ export function NetSettlementScreen({ navigation, route }: Props) {
 
         <View style={styles.tagRow}>
           <View style={[styles.tag, styles.tagCommission]}>
-            <Text style={[styles.tagText, styles.tagTextCommission]}>Commission: {formatINR(settlement.commission)}</Text>
+            <Text style={[styles.tagText, styles.tagTextCommission]}>Commission: {formatINR(totals.commission)}</Text>
           </View>
           <View style={[styles.tag, styles.tagGst]}>
-            <Text style={[styles.tagText, styles.tagTextGst]}>GST: {formatINR(settlement.gstOnCommission)}</Text>
+            <Text style={[styles.tagText, styles.tagTextGst]}>GST: {formatINR(totals.gst)}</Text>
           </View>
-          <View style={[styles.tag, styles.tagAdjustments]}>
-            <Text style={[styles.tagText, styles.tagTextAdjustments]}>Adjustments: {formatINR(settlement.adjustments)}</Text>
-          </View>
+          {totals.returns ? (
+            <View style={[styles.tag, styles.tagAdjustments]}>
+              <Text style={[styles.tagText, styles.tagTextAdjustments]}>Returns: {formatINR(totals.returns)}</Text>
+            </View>
+          ) : null}
+          {totals.adjustments ? (
+            <View style={[styles.tag, styles.tagAdjustments]}>
+              <Text style={[styles.tagText, styles.tagTextAdjustments]}>Adjustments: {formatINR(totals.adjustments)}</Text>
+            </View>
+          ) : null}
         </View>
-
-        {settlement.dueDateLabel ? (
-          <View style={styles.nextSettlementCard}>
-            <Text style={styles.nextSettlementLabel}>Next Settlement</Text>
-            <Text style={styles.nextSettlementValue}>
-              {settlement.dueDateLabel} · {formatINR(settlement.netPayout)}
-            </Text>
-          </View>
-        ) : null}
 
         <View style={styles.bankCard}>
           <View style={styles.bankCardRow}>
-            <View>
+            <View style={styles.bankCardText}>
               <Text style={styles.bankCardLabel}>Bank Account</Text>
-              <Text style={styles.bankCardValue}>{settlement.bankAccountLabel}</Text>
+              <Text style={styles.bankCardValue}>{bankAccountLabel ?? 'Not linked to these settlements yet'}</Text>
             </View>
-            <Text style={styles.updateLink} onPress={handleUpdateBank}>
-              Update →
+            <Text style={styles.updateLink} onPress={() => navigation.navigate('ProfileBankDetails')}>
+              Manage →
             </Text>
           </View>
         </View>
@@ -115,16 +108,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: spacing.huge,
-  },
-  notFound: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xxl,
-  },
-  notFoundText: {
-    ...typography.body,
-    color: colors.textSecondary,
   },
   filterBarWrap: {
     paddingHorizontal: spacing.xl,
@@ -226,24 +209,6 @@ const styles = StyleSheet.create({
   tagTextAdjustments: {
     color: colors.error,
   },
-  nextSettlementCard: {
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.xl,
-    backgroundColor: colors.primarySurface,
-    borderRadius: radii.md,
-    padding: spacing.xl,
-  },
-  nextSettlementLabel: {
-    ...typography.label,
-    color: colors.textSecondary,
-  },
-  nextSettlementValue: {
-    ...typography.h3,
-    fontSize: 16,
-    lineHeight: 24,
-    color: colors.textPrimary,
-    paddingTop: spacing.xs,
-  },
   bankCard: {
     marginHorizontal: spacing.xl,
     backgroundColor: colors.surface,
@@ -256,6 +221,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  bankCardText: {
+    flex: 1,
   },
   bankCardLabel: {
     ...typography.label,

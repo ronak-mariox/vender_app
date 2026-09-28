@@ -1,24 +1,18 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { PAYMENTS_PERIOD_LABELS, PaymentsPeriod, usePayments } from '../../context/PaymentsContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
-export type PaymentsPeriod = 'today' | 'week' | 'month' | 'custom';
+const PERIODS = (Object.keys(PAYMENTS_PERIOD_LABELS) as PaymentsPeriod[]).map(key => ({
+  key,
+  label: PAYMENTS_PERIOD_LABELS[key],
+}));
 
-const PERIODS: { key: PaymentsPeriod; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'week', label: 'This Week' },
-  { key: 'month', label: 'This Month' },
-  { key: 'custom', label: 'Custom' },
-];
-
-type Props = {
-  value: PaymentsPeriod;
-  onChange: (value: PaymentsPeriod) => void;
-};
-
-export function PeriodFilterBar({ value, onChange }: Props) {
+/** Drives the shared PaymentsContext period, so every payments screen filters the same way. */
+export function PeriodFilterBar() {
+  const { period: value, setPeriod: onChange } = usePayments();
   return (
-    <View style={styles.row}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
       {PERIODS.map(period => {
         const active = period.key === value;
         return (
@@ -31,7 +25,7 @@ export function PeriodFilterBar({ value, onChange }: Props) {
           </Pressable>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 

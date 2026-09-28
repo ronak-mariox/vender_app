@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ScreenContainer } from '../../components';
@@ -15,11 +15,17 @@ type ImpactRow = {
   tone: ImpactTone;
 };
 
-const IMPACT_ROWS: ImpactRow[] = [
-  { stage: 'Before acceptance', impact: 'No penalty', tone: 'success' },
-  { stage: 'After acceptance, before prep', impact: '0.5% rating impact', tone: 'warning' },
-  { stage: 'After preparation starts', impact: '2% rating impact', tone: 'error' },
-  { stage: 'Repeated cancellations', impact: 'Account review', tone: 'error' },
+const CUSTOMER_ROWS: ImpactRow[] = [
+  { stage: 'Placed (not yet accepted)', impact: 'Customer can cancel', tone: 'success' },
+  { stage: 'Accepted', impact: 'Customer can cancel', tone: 'success' },
+  { stage: 'Preparing or later', impact: 'Customer cannot cancel', tone: 'warning' },
+];
+
+const VENDOR_ROWS: ImpactRow[] = [
+  { stage: 'Placed', impact: 'Reject with a reason', tone: 'success' },
+  { stage: 'Accepted / Preparing', impact: 'Cancel with a reason', tone: 'warning' },
+  { stage: 'Ready for pickup', impact: 'Cancel with a reason', tone: 'warning' },
+  { stage: 'Out for delivery', impact: 'Cannot cancel', tone: 'error' },
 ];
 
 const TONE_COLOR: Record<ImpactTone, string> = {
@@ -32,65 +38,59 @@ type Tab = 'customer' | 'vendor';
 
 export function PolicyCancellationScreen({ navigation }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('customer');
-
-  function handleSelectTab(tab: Tab) {
-    if (tab === 'vendor') {
-      Alert.alert('Vendor Cancellation', 'Coming soon.');
-      return;
-    }
-    setActiveTab(tab);
-  }
+  const rows = activeTab === 'customer' ? CUSTOMER_ROWS : VENDOR_ROWS;
 
   return (
     <ScreenContainer edges={['top', 'left', 'right', 'bottom']}>
       <NavHeader title="Cancellation Policy" onBack={() => navigation.goBack()} />
       <View style={styles.tabRow}>
-        <Pressable
-          style={[styles.tab, activeTab === 'customer' && styles.tabActive]}
-          onPress={() => handleSelectTab('customer')}
-        >
-          <Text style={[styles.tabLabel, activeTab === 'customer' && styles.tabLabelActive]}>
-            Customer Cancellation
-          </Text>
-        </Pressable>
-        <Pressable style={styles.tab} onPress={() => handleSelectTab('vendor')}>
-          <Text style={styles.tabLabel}>Vendor Cancellation</Text>
-        </Pressable>
+        {(['customer', 'vendor'] as Tab[]).map(tab => (
+          <Pressable
+            key={tab}
+            style={[styles.tab, activeTab === tab && styles.tabActive]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text style={[styles.tabLabel, activeTab === tab && styles.tabLabelActive]}>
+              {tab === 'customer' ? 'Customer Cancellation' : 'Vendor Cancellation'}
+            </Text>
+          </Pressable>
+        ))}
       </View>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.intro}>
-          {'Customers may cancel an order at any time before it has been '}
-          <Text style={styles.introBold}>Accepted</Text>
-          {' by the vendor at no penalty to either party. Once accepted, cancellations may affect your vendor rating as outlined below.'}
-        </Text>
+        {activeTab === 'customer' ? (
+          <Text style={styles.intro}>
+            {'Customers can cancel an order until you '}
+            <Text style={styles.introBold}>start preparing</Text>
+            {' it. You are notified of every customer cancellation.'}
+          </Text>
+        ) : (
+          <Text style={styles.intro}>
+            {'You can reject a new order, or cancel an accepted order until a delivery partner '}
+            <Text style={styles.introBold}>picks it up</Text>
+            {'. A reason is required and is shared with the customer.'}
+          </Text>
+        )}
 
-        <Text style={styles.tableTitle}>Vendor Impact on Customer Cancellation</Text>
+        <Text style={styles.tableTitle}>
+          {activeTab === 'customer' ? 'When customers can cancel' : 'When you can cancel'}
+        </Text>
 
         <View style={styles.table}>
           <View style={styles.tableHeaderRow}>
-            <Text style={[styles.tableHeaderCell, styles.stageColumn]}>STAGE</Text>
-            <Text style={styles.tableHeaderCell}>VENDOR IMPACT</Text>
+            <Text style={[styles.tableHeaderCell, styles.stageColumn]}>ORDER STATUS</Text>
+            <Text style={styles.tableHeaderCell}>RULE</Text>
           </View>
-          {IMPACT_ROWS.map((row, index) => (
-            <View
-              key={row.stage}
-              style={[
-                styles.tableRow,
-                index < IMPACT_ROWS.length - 1 && styles.tableRowDivider,
-              ]}
-            >
+          {rows.map((row, index) => (
+            <View key={row.stage} style={[styles.tableRow, index < rows.length - 1 && styles.tableRowDivider]}>
               <Text style={[styles.tableStage, styles.stageColumn]}>{row.stage}</Text>
-              <Text style={[styles.tableImpact, { color: TONE_COLOR[row.tone] }]}>
-                {row.impact}
-              </Text>
+              <Text style={[styles.tableImpact, { color: TONE_COLOR[row.tone] }]}>{row.impact}</Text>
             </View>
           ))}
         </View>
 
         <View style={styles.callout}>
           <Text style={styles.calloutText}>
-            Vendors with a cancellation rate above 5% in any 30-day period will enter a
-            performance review process.
+            Stock for every item in a cancelled or rejected order is returned to your inventory automatically.
           </Text>
         </View>
       </ScrollView>

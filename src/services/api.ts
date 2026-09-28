@@ -1,27 +1,15 @@
 import axios, { AxiosError, AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL, API_ORIGIN, API_TIMEOUT_MS } from '../config';
 
-/**
- * Base URL for the vendor backend API.
- *
- * - iOS Simulator (running on the same Mac as the backend): `localhost` works as-is.
- * - Android Emulator: the emulator can't see the host machine's `localhost` — use
- *   `http://10.0.2.2:4000/api` instead (the emulator's alias for the host loopback).
- * - Physical device (iOS or Android) on the same Wi-Fi as your dev machine: use your
- *   machine's LAN IP instead, e.g. `http://192.168.1.23:4000/api`.
- */
-export const API_BASE_URL = 'http://localhost:4000/api';
-
-/** The backend's origin (no `/api` suffix) — for resolving relative asset URLs
- * like `/uploads/xyz.jpg` (returned by upload endpoints) into a displayable URI. */
-export const API_ORIGIN = API_BASE_URL.replace(/\/api$/, '');
+export { API_BASE_URL, API_ORIGIN };
 
 export const ACCESS_TOKEN_KEY = 'vendor_access_token';
 export const REFRESH_TOKEN_KEY = 'vendor_refresh_token';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 20000,
+  timeout: API_TIMEOUT_MS,
 });
 
 api.interceptors.request.use(async config => {
@@ -45,11 +33,27 @@ function resolveQueue(token: string | null, error?: unknown) {
   pendingQueue = [];
 }
 
-let forceLogoutHandler: (() => void) | null = null;
+export type ForceLogoutReason = 'session_expired' | 'account_restricted';
 
-/** Registered by VendorAuthContext so a failed silent refresh can clear app auth state. */
-export function setForceLogoutHandler(handler: (() => void) | null) {
+let forceLogoutHandler: ((reason: ForceLogoutReason, message?: string) => void) | null = null;
+
+/** Registered by VendorAuthContext so a failed silent refresh or a restricted
+ * account can clear app auth state and send the vendor back to Login. */
+export function setForceLogoutHandler(handler: ((reason: ForceLogoutReason, message?: string) => void) | null) {
   forceLogoutHandler = handler;
+}
+
+export function isAccountRestrictedError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const data = error.response?.data as { reason?: string } | undefined;
+  return error.response?.status === 403 && data?.reason === 'account_restricted';
+}
+
+/** List endpoints may return a bare array or `{ items: [...] }`. */
+export function unwrapList<T>(data: unknown): T[] {
+  if (Array.isArray(data)) return data as T[];
+  const items = (data as { items?: unknown } | null | undefined)?.items;
+  return Array.isArray(items) ? (items as T[]) : [];
 }
 
 api.interceptors.response.use(
@@ -58,6 +62,13 @@ api.interceptors.response.use(
     const originalRequest = error.config as RetryableRequestConfig | undefined;
     const status = error.response?.status;
     const url = originalRequest?.url ?? '';
+
+    if (isAccountRestrictedError(error)) {
+      const data = error.response?.data as { error?: string; message?: string } | undefined;
+      await AsyncStorage.removeMany([ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY]);
+      forceLogoutHandler?.('account_restricted', data?.error ?? data?.message);
+      return Promise.reject(error);
+    }
 
     const isAuthEndpoint =
       url.includes('/auth/refresh') ||
@@ -121,7 +132,7 @@ api.interceptors.response.use(
       const refreshStatus = axios.isAxiosError(refreshError) ? refreshError.response?.status : undefined;
       if (refreshStatus === 401 || refreshStatus === 403) {
         await AsyncStorage.removeMany([ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY]);
-        forceLogoutHandler?.();
+        forceLogoutHandler?.('session_expired');
       }
       return Promise.reject(refreshError);
     } finally {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -17,10 +17,11 @@ import {
 } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration, type BusinessProofData } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage, getFieldErrors } from '../../services/api';
+import { api, getApiErrorMessage } from '../../services/api';
 import { pickAndUploadDocument } from '../../services/upload';
 import { filenameFromUrl } from '../../utils/format';
 import { isRequired, type FormErrors } from '../../utils/validators';
+import { formatDisplayDate, handleRegistrationSaveError, isoToDate, toIsoDate } from './registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'BusinessProof'>;
@@ -33,22 +34,9 @@ const DOCUMENT_TYPES = [
   'Certificate of Incorporation',
 ];
 
-type Errors = FormErrors<'documentType' | 'documentNumber' | 'issueDate' | 'frontUrl'>;
+const FIELDS = ['documentType', 'documentNumber', 'issueDate', 'expiryDate', 'frontUrl', 'backUrl'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 type DateField = 'issueDate' | 'expiryDate';
-
-function toIsoDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function formatDisplayDate(iso: string): string {
-  if (!iso) return '';
-  const date = new Date(`${iso}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-}
 
 export function BusinessProofScreen({ navigation }: Props) {
   const { data, updateBusinessProof } = useRegistration();
@@ -67,6 +55,10 @@ export function BusinessProofScreen({ navigation }: Props) {
   const [uploadingBack, setUploadingBack] = useState(false);
   const [saving, setSaving] = useState(false);
   const [datePickerField, setDatePickerField] = useState<DateField | null>(null);
+
+  useEffect(() => {
+    if (data.businessProof) setForm(data.businessProof);
+  }, [data.businessProof]);
 
   function set<K extends keyof BusinessProofData>(key: K, value: BusinessProofData[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -117,6 +109,9 @@ export function BusinessProofScreen({ navigation }: Props) {
     if (!isRequired(form.documentNumber)) nextErrors.documentNumber = 'Enter the document number';
     if (!isRequired(form.issueDate)) nextErrors.issueDate = 'Enter the issue date';
     if (!isRequired(form.frontUrl)) nextErrors.frontUrl = 'Upload the front side of the document';
+    if (form.expiryDate && form.issueDate && form.expiryDate < form.issueDate) {
+      nextErrors.expiryDate = 'Expiry date must be after the issue date';
+    }
 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -125,21 +120,21 @@ export function BusinessProofScreen({ navigation }: Props) {
     try {
       await api.patch('/vendor/registration/business-proof', {
         documentType: form.documentType,
-        documentNumber: form.documentNumber,
+        documentNumber: form.documentNumber.trim(),
         issueDate: form.issueDate,
-        expiryDate: form.expiryDate,
+        ...(form.expiryDate ? { expiryDate: form.expiryDate } : {}),
         frontUrl: form.frontUrl,
-        backUrl: form.backUrl,
+        ...(form.backUrl ? { backUrl: form.backUrl } : {}),
       });
       updateBusinessProof(form);
       navigation.navigate('BankDetails');
     } catch (err) {
-      const fieldErrors = getFieldErrors(err);
-      if (Object.keys(fieldErrors).length > 0) {
-        setErrors(fieldErrors as Errors);
-      } else {
-        setErrors({ form: getApiErrorMessage(err, 'Could not save your business proof. Please try again.') });
-      }
+      handleRegistrationSaveError<Errors>(
+        err,
+        setErrors,
+        'Could not save your business proof. Please try again.',
+        FIELDS,
+      );
     } finally {
       setSaving(false);
     }
@@ -150,7 +145,7 @@ export function BusinessProofScreen({ navigation }: Props) {
   return (
     <ScreenContainer backgroundColor={colors.surface} scrollable>
       <NavHeader title="Business Registration" onBack={() => navigation.goBack()} />
-      <ProgressSteps currentStep={6} totalSteps={8} label="Business Proof" />
+      <ProgressSteps currentStep={7} totalSteps={8} label="Business Proof" />
       <View style={styles.content}>
         <View style={styles.headingBlock}>
           <Text style={styles.heading}>Business Proof</Text>
@@ -172,7 +167,7 @@ export function BusinessProofScreen({ navigation }: Props) {
             leftIcon="hash"
             value={form.documentNumber}
             onChangeText={text => set('documentNumber', text)}
-            placeholder="TL/MUM/2023/78945"
+            placeholder="As printed on the document"
             error={errors.documentNumber}
           />
           <View>
@@ -193,33 +188,36 @@ export function BusinessProofScreen({ navigation }: Props) {
                 {errors.issueDate ? <Text style={styles.errorText}>{errors.issueDate}</Text> : null}
               </View>
               <View style={styles.dateItem}>
-                <Pressable style={styles.datePressable} onPress={() => setDatePickerField('expiryDate')}>
+                <Pressable
+                  style={[styles.datePressable, errors.expiryDate && styles.datePressableError]}
+                  onPress={() => setDatePickerField('expiryDate')}
+                >
                   <Icon name="calendar" size={16} color={colors.textSecondary} />
                   <Text style={[styles.dateValue, !form.expiryDate && styles.datePlaceholder]} numberOfLines={1}>
-                    {form.expiryDate ? formatDisplayDate(form.expiryDate) : 'Expiry date'}
+                    {form.expiryDate ? formatDisplayDate(form.expiryDate) : 'Expiry (if any)'}
                   </Text>
                 </Pressable>
+                {errors.expiryDate ? <Text style={styles.errorText}>{errors.expiryDate}</Text> : null}
               </View>
             </View>
-            <Text style={styles.helperText}>Issue Date — Expiry Date</Text>
+            <Text style={styles.helperText}>Issue date (required) — Expiry date (leave empty if the document has none)</Text>
+            {form.expiryDate ? (
+              <Pressable onPress={() => set('expiryDate', '')} hitSlop={8}>
+                <Text style={styles.clearText}>Clear expiry date</Text>
+              </Pressable>
+            ) : null}
           </View>
           {datePickerField ? (
             <DateTimePicker
               value={
-                form[datePickerField]
-                  ? new Date(`${form[datePickerField]}T00:00:00`)
-                  : datePickerField === 'expiryDate' && form.issueDate
-                    ? new Date(`${form.issueDate}T00:00:00`)
-                    : new Date()
+                isoToDate(form[datePickerField]) ??
+                (datePickerField === 'expiryDate' ? isoToDate(form.issueDate) : null) ??
+                new Date()
               }
               mode="date"
               display={Platform.OS === 'ios' ? 'spinner' : 'default'}
               maximumDate={datePickerField === 'issueDate' ? new Date() : undefined}
-              minimumDate={
-                datePickerField === 'expiryDate' && form.issueDate
-                  ? new Date(`${form.issueDate}T00:00:00`)
-                  : undefined
-              }
+              minimumDate={datePickerField === 'expiryDate' ? isoToDate(form.issueDate) ?? undefined : undefined}
               onChange={handleDateChange}
             />
           ) : null}
@@ -244,6 +242,7 @@ export function BusinessProofScreen({ navigation }: Props) {
               onPress={handleUploadFront}
             />
           )}
+          {errors.backUrl ? <Text style={styles.errorText}>{errors.backUrl}</Text> : null}
           {form.backUrl ? (
             <FileCard
               fileName={filenameFromUrl(form.backUrl)}
@@ -282,6 +281,12 @@ export function BusinessProofScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  clearText: {
+    ...typography.caption,
+    fontFamily: fontFamilies.medium,
+    color: colors.primary,
+    paddingTop: spacing.xs,
+  },
   content: {
     paddingHorizontal: spacing.xxl,
     paddingTop: spacing.md,

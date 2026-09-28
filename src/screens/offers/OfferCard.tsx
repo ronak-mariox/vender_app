@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../../icons/Icon';
 import { Badge, BadgeTone } from '../../components';
 import { Offer, OfferStatus } from '../../context/OffersContext';
+import { formatOfferDate, offerTypeLabel } from './offerFormat';
 import { colors, radii, spacing, typography } from '../../theme';
 
 const STATUS_META: Record<OfferStatus, { label: string; tone: BadgeTone }> = {
@@ -11,12 +12,6 @@ const STATUS_META: Record<OfferStatus, { label: string; tone: BadgeTone }> = {
   expired: { label: 'Expired', tone: 'neutral' },
   paused: { label: 'Paused', tone: 'warning' },
 };
-
-export function offerTypeLabel(offer: Pick<Offer, 'discountType' | 'discountValue'>) {
-  return offer.discountType === 'percentage'
-    ? `${offer.discountValue}% Percentage Discount`
-    : `₹${offer.discountValue} Fixed Amount Off`;
-}
 
 type Props = {
   offer: Offer;
@@ -28,17 +23,17 @@ export function OfferCard({ offer, onPress, onMenuPress }: Props) {
   const status = STATUS_META[offer.status];
   const dateRow =
     offer.status === 'scheduled'
-      ? `Starts ${offer.startDateLabel}`
+      ? `Starts ${formatOfferDate(offer.startDate)}`
       : offer.status === 'expired'
-        ? `Ended ${offer.endDateLabel}`
-        : `Ends ${offer.endDateLabel}`;
+        ? `Ended ${formatOfferDate(offer.endDate)}`
+        : `Ends ${formatOfferDate(offer.endDate)}`;
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
       <View style={styles.topRow}>
         <View style={styles.textColumn}>
           <Text style={styles.name} numberOfLines={1}>
-            {offer.name}
+            {offer.title}
           </Text>
           <View style={styles.badgeRow}>
             <View style={styles.typeBadge}>

@@ -5,70 +5,47 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, NavHeader, ReviewSectionCard, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration } from '../../context/RegistrationContext';
-import { api } from '../../services/api';
 import { BUSINESS_TYPE_OPTIONS } from '../registration/BusinessTypeScreen';
+import { formatDisplayDate } from '../registration/registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'KYCReview'>;
 
 export function KYCReviewScreen({ navigation }: Props) {
-  const {
-    data,
-    updateBusinessType,
-    updateBusinessInfo,
-    updateOwnerInfo,
-    updateStoreInfo,
-    updateGstDetails,
-    updatePanDetails,
-    updateBusinessProof,
-    updateBankDetails,
-  } = useRegistration();
+  const { data, refresh } = useRegistration();
 
-  // Resumability: if the app was restarted mid-registration, RegistrationContext may
-  // be missing earlier steps even though the server already persisted them (each
-  // registration PATCH call saves to the backend as it happens) — e.g. a restart
-  // routes the vendor straight to their next incomplete step, they fill in just
-  // that one, and local context now only has that single step. Reconcile by
-  // pulling the server's copy and filling in ONLY whichever steps are missing
-  // locally — never overwriting a step that's already present in local context —
-  // so this runs safely every time regardless of how much local state exists.
-  //
-  // The local-only `verified` flag (not persisted by the backend) is re-derived as
-  // `true` for any step filled in from the server, since a previously-saved step
-  // implies it passed validation at the time.
   useEffect(() => {
-    (async () => {
-      try {
-        const { data: remote } = await api.get('/vendor/registration');
-        if (remote.businessType && !data.businessType) updateBusinessType(remote.businessType);
-        if (remote.businessInfo && !data.businessInfo) updateBusinessInfo(remote.businessInfo);
-        if (remote.ownerInfo && !data.ownerInfo) updateOwnerInfo(remote.ownerInfo);
-        if (remote.storeInfo && !data.storeInfo) updateStoreInfo(remote.storeInfo);
-        if (remote.gstDetails && !data.gstDetails) updateGstDetails({ ...remote.gstDetails, verified: true });
-        if (remote.panDetails && !data.panDetails) updatePanDetails({ ...remote.panDetails, verified: true });
-        if (remote.businessProof && !data.businessProof) updateBusinessProof(remote.businessProof);
-        if (remote.bankDetails && !data.bankDetails) updateBankDetails({ ...remote.bankDetails, verified: true });
-      } catch {
-        // Best-effort — if this fails (offline, etc.) the screen just shows whatever
-        // is already in local context.
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    refresh().catch(() => undefined);
+  }, [refresh]);
+
+  const steps: { done: boolean; screen: keyof AuthStackParamList }[] = [
+    { done: Boolean(data.businessType), screen: 'BusinessType' },
+    { done: Boolean(data.businessInfo), screen: 'BusinessInfo' },
+    { done: Boolean(data.ownerInfo), screen: 'OwnerInfo' },
+    { done: Boolean(data.storeInfo), screen: 'StoreInfo' },
+    { done: Boolean(data.gstDetails), screen: 'GSTDetails' },
+    { done: Boolean(data.panDetails), screen: 'PANVerification' },
+    { done: Boolean(data.businessProof), screen: 'BusinessProof' },
+    { done: Boolean(data.bankDetails), screen: 'BankDetails' },
+  ];
+  const completedSteps = steps.filter(step => step.done).length;
+  const totalSteps = steps.length;
+  const firstMissing = steps.find(step => !step.done)?.screen;
+  const allComplete = completedSteps === totalSteps;
 
   const businessTypeOption = BUSINESS_TYPE_OPTIONS.find(option => option.value === data.businessType);
 
   function handleSubmit() {
-    if (
-      !data.businessType ||
-      !data.businessInfo ||
-      !data.ownerInfo ||
-      !data.storeInfo ||
-      !data.panDetails ||
-      !data.businessProof ||
-      !data.bankDetails
-    ) {
-      Alert.alert('Incomplete application', 'Please complete all sections before submitting.');
+    if (!allComplete) {
+      Alert.alert('Incomplete application', 'Please complete all sections before submitting.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          onPress: () => {
+            if (firstMissing) navigation.navigate(firstMissing as 'BusinessType');
+          },
+        },
+      ]);
       return;
     }
     navigation.navigate('VendorAgreement');
@@ -85,16 +62,20 @@ export function KYCReviewScreen({ navigation }: Props) {
           <View style={styles.bannerTextColumn}>
             <Text style={styles.bannerTitle}>Review your application</Text>
             <Text style={styles.bannerSubtitle}>
-              All 8 sections complete. Please review before submitting. Use Edit to make changes.
+              {allComplete
+                ? 'All sections complete. Please review before submitting. Use Edit to make changes.'
+                : `${totalSteps - completedSteps} of ${totalSteps} sections still need to be completed.`}
             </Text>
           </View>
         </View>
 
         <View style={styles.progressRow}>
           <View style={styles.progressTrack}>
-            <View style={styles.progressFill} />
+            <View style={[styles.progressFill, { width: `${(completedSteps / totalSteps) * 100}%` }]} />
           </View>
-          <Text style={styles.progressText}>8/8 Complete</Text>
+          <Text style={styles.progressText}>
+            {completedSteps}/{totalSteps} Complete
+          </Text>
         </View>
 
         <View style={styles.sections}>
@@ -134,8 +115,8 @@ export function KYCReviewScreen({ navigation }: Props) {
               rows={[
                 { label: 'Full Name', value: data.ownerInfo.fullName },
                 { label: 'Mobile', value: `+91 ${data.ownerInfo.mobile} ✓` },
-                { label: 'Email', value: `${data.ownerInfo.email} ✓` },
-                { label: 'Date of Birth', value: data.ownerInfo.dob },
+                { label: 'Email', value: data.ownerInfo.email },
+                { label: 'Date of Birth', value: formatDisplayDate(data.ownerInfo.dob) },
                 { label: 'PAN', value: data.ownerInfo.pan },
               ]}
               onEdit={() => navigation.navigate('OwnerInfo')}
@@ -153,6 +134,15 @@ export function KYCReviewScreen({ navigation }: Props) {
                 { label: 'Type', value: data.storeInfo.storeType },
               ]}
               onEdit={() => navigation.navigate('StoreInfo')}
+            />
+          ) : null}
+
+          {data.gstDetails && !data.gstDetails.registered ? (
+            <ReviewSectionCard
+              icon="check-circle"
+              title="GST Details"
+              rows={[{ label: 'GST', value: 'Not registered under GST' }]}
+              onEdit={() => navigation.navigate('GSTDetails')}
             />
           ) : null}
 
@@ -195,7 +185,10 @@ export function KYCReviewScreen({ navigation }: Props) {
               rows={[
                 { label: 'Document Type', value: data.businessProof.documentType },
                 { label: 'Number', value: data.businessProof.documentNumber },
-                { label: 'Valid Until', value: data.businessProof.expiryDate },
+                {
+                  label: 'Valid Until',
+                  value: data.businessProof.expiryDate ? formatDisplayDate(data.businessProof.expiryDate) : 'No expiry',
+                },
               ]}
               onEdit={() => navigation.navigate('BusinessProof')}
             />

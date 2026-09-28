@@ -1,12 +1,14 @@
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Badge, BadgeTone } from '../../components';
+import { Badge, BadgeTone, NavHeader } from '../../components';
 import { Icon, IconName } from '../../icons/Icon';
 import { useProductCatalog, ProductStatus } from '../../context/ProductCatalogContext';
+import { formatTimeAgo } from '../../utils/time';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'EditProduct'>;
 
@@ -31,6 +33,7 @@ export function EditProductScreen({ navigation, route }: Props) {
   if (!product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <NavHeader title="Edit Product" onBack={() => navigation.goBack()} />
         <View style={styles.missingState}>
           <Icon name="package" size={32} color={colors.textTertiary} />
           <Text style={styles.missingText}>This product is no longer available.</Text>
@@ -39,8 +42,15 @@ export function EditProductScreen({ navigation, route }: Props) {
     );
   }
 
-  const isActive = product.status === 'active' || product.status === 'low-stock';
+  const isActive =
+    product.status === 'active' || product.status === 'low-stock' || product.status === 'out-of-stock';
   const statusMeta = STATUS_META[product.status];
+
+  const variantCount = product.variants?.length ?? 0;
+  const discount =
+    product.mrp > 0 && product.mrp > product.sellingPrice
+      ? Math.round(((product.mrp - product.sellingPrice) / product.mrp) * 100)
+      : 0;
 
   const sections: {
     key: string;
@@ -57,7 +67,9 @@ export function EditProductScreen({ navigation, route }: Props) {
       iconBackground: colors.primarySurface,
       iconColor: colors.primary,
       title: 'Basic Information',
-      subtitle: 'Name, brand, description',
+      subtitle: [product.brand || 'No brand', product.countryOfOrigin, product.description ? 'Description added' : 'No description']
+        .filter(Boolean)
+        .join(' · '),
       onPress: () => navigation.navigate('EditInformation', { productId }),
     },
     {
@@ -66,7 +78,7 @@ export function EditProductScreen({ navigation, route }: Props) {
       iconBackground: '#F5F3FF',
       iconColor: '#7C3AED',
       title: 'Product Images',
-      subtitle: `${product.galleryCount ?? 0} images uploaded`,
+      subtitle: `${product.images?.length ?? 0} images uploaded`,
       onPress: () => navigation.navigate('EditImages', { productId }),
     },
     {
@@ -74,8 +86,8 @@ export function EditProductScreen({ navigation, route }: Props) {
       icon: 'tag',
       iconBackground: '#EFF8FF',
       iconColor: '#1570EF',
-      title: 'Category & Brand',
-      subtitle: `${product.categoryName} · ${product.subcategoryName}`,
+      title: 'Category',
+      subtitle: [product.categoryName || 'Unknown category', product.subcategoryName].filter(Boolean).join(' · '),
       onPress: () => navigation.navigate('EditInformation', { productId }),
     },
     {
@@ -83,10 +95,11 @@ export function EditProductScreen({ navigation, route }: Props) {
       icon: 'percent',
       iconBackground: '#FFF7ED',
       iconColor: '#EA580C',
-      title: 'Price & Discount',
-      subtitle: `MRP ₹${product.mrp} · Selling ₹${product.sellingPrice} · ${
-        product.mrp > 0 ? Math.round(((product.mrp - product.sellingPrice) / product.mrp) * 100) : 0
-      }% off`,
+      title: variantCount > 1 ? 'Price & Variants' : 'Price & Pack Size',
+      subtitle:
+        variantCount > 1
+          ? `${variantCount} variants · from ₹${Math.min(...(product.variants ?? []).map(v => v.sellingPrice))}`
+          : `${product.packSize ?? '—'} · MRP ₹${product.mrp} · Selling ₹${product.sellingPrice} · ${discount}% off`,
       onPress: () => navigation.navigate('EditPrice', { productId }),
     },
     {
@@ -95,7 +108,7 @@ export function EditProductScreen({ navigation, route }: Props) {
       iconBackground: '#ECFEFF',
       iconColor: '#0891B2',
       title: 'Tax Information',
-      subtitle: `GST ${product.gstRate ?? '0'}% · HSN ${product.hsnCode ?? '—'}`,
+      subtitle: `GST ${product.gstRate ?? '0'}% · HSN ${product.hsnCode || '—'}`,
       onPress: () => navigation.navigate('EditInformation', { productId }),
     },
     {
@@ -104,26 +117,25 @@ export function EditProductScreen({ navigation, route }: Props) {
       iconBackground: '#F5F3FF',
       iconColor: '#7C3AED',
       title: 'SKU & Barcode',
-      subtitle: product.sku,
-      onPress: () =>
-        Alert.alert('SKU & Barcode', 'SKU and barcode cannot be changed after the product is published.'),
+      subtitle: `SKU ${product.sku || '—'} · Barcode ${product.barcode || '—'}`,
+      onPress: () => navigation.navigate('EditInformation', { productId }),
     },
     {
       key: 'stock',
       icon: 'package',
       iconBackground: colors.primarySurface,
       iconColor: colors.primary,
-      title: 'Stock & Inventory',
-      subtitle: `${product.stock} units · Reorder at ${product.reorderLevel}`,
+      title: 'Stock',
+      subtitle: `${product.stock} units in stock${variantCount > 1 ? ` across ${variantCount} variants` : ''}`,
       onPress: () => navigation.navigate('EditStock', { productId }),
     },
     {
-      key: 'variants',
-      icon: 'tag',
+      key: 'alerts',
+      icon: 'bell',
       iconBackground: '#FFF7ED',
       iconColor: '#EA580C',
-      title: 'Pack Size & Variants',
-      subtitle: `${product.packSize ?? '—'} · ${product.variants?.length ?? 0} variants`,
+      title: 'Stock Alerts',
+      subtitle: `Reorder at ${product.reorderLevel || '—'} · Max ${product.maxStock || '—'}`,
       onPress: () => navigation.navigate('EditInformation', { productId }),
     },
   ];
@@ -137,20 +149,25 @@ export function EditProductScreen({ navigation, route }: Props) {
           </Pressable>
           <View style={styles.headerTextColumn}>
             <Text style={styles.headerTitle}>Edit Product</Text>
-            <Text style={styles.headerSubtitle}>Last updated: 2 hours ago</Text>
+            <Text style={styles.headerSubtitle}>
+              Last updated: {product.updatedAt ? formatTimeAgo(product.updatedAt) : '—'}
+            </Text>
           </View>
           <Badge label={statusMeta.label} tone={statusMeta.tone} />
         </View>
         <View style={styles.productRow}>
-          <View style={styles.productIcon}>
-            <Icon name="package" size={20} color={colors.textSecondary} />
-          </View>
+          <ProductThumb
+            imageUrl={product.images?.[0]}
+            style={styles.productIcon}
+            iconSize={20}
+            iconColor={colors.textSecondary}
+          />
           <View style={styles.productTextColumn}>
             <Text style={styles.productName} numberOfLines={1}>
               {product.name}
             </Text>
             <Text style={styles.productMeta}>
-              SKU: {product.sku} · {product.stock} in stock
+              SKU: {product.sku || '—'} · {product.stock} in stock
             </Text>
           </View>
         </View>

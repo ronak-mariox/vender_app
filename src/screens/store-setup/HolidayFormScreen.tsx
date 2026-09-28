@@ -6,13 +6,15 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button, FormSectionCard, Input, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useStoreSetup, type HolidayClosureItem } from '../../context/StoreSetupContext';
-import { api, getApiErrorMessage } from '../../services/api';
+import { api } from '../../services/api';
+import { handleFormSaveError } from '../registration/registrationHelpers';
 import { isRequired, type FormErrors } from '../../utils/validators';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'HolidayForm'>;
 
-type Errors = FormErrors<'title' | 'date' | 'daysClosed' | 'note'>;
+const FIELDS = ['title', 'date', 'daysClosed', 'note'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
 type FormState = {
   title: string;
@@ -90,7 +92,7 @@ export function HolidayFormScreen({ navigation, route }: Props) {
       }
       navigation.goBack();
     } catch (err) {
-      setErrors({ form: getApiErrorMessage(err) });
+      handleFormSaveError<Errors>(err, setErrors, 'Could not save this closure. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -111,7 +113,7 @@ export function HolidayFormScreen({ navigation, route }: Props) {
             required
             value={form.title}
             onChangeText={text => set('title', text)}
-            placeholder="Diwali Break"
+            placeholder="e.g. Festival break"
             error={errors.title}
           />
 

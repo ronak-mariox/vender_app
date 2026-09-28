@@ -5,20 +5,19 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { CATEGORIES } from '../../data/categories';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CategoryBrowse'>;
 
 export function CategoryBrowseScreen({ navigation }: Props) {
-  const { products } = useProductCatalog();
+  const { products, categories: allCategories, loading, error } = useProductCatalog();
   const [query, setQuery] = useState('');
 
   const categories = useMemo(() => {
     const lower = query.trim().toLowerCase();
-    return CATEGORIES.filter(category => category.name.toLowerCase().includes(lower));
-  }, [query]);
+    return allCategories.filter(category => category.name.toLowerCase().includes(lower));
+  }, [allCategories, query]);
 
   function productCountFor(categoryId: string) {
     return products.filter(product => product.categoryId === categoryId).length;
@@ -43,6 +42,17 @@ export function CategoryBrowseScreen({ navigation }: Props) {
 
       <View style={styles.content}>
         <Text style={styles.sectionTitle}>All Categories</Text>
+        {categories.length === 0 ? (
+          <Text style={styles.categoryMeta}>
+            {loading
+              ? 'Loading categories…'
+              : error
+              ? `Couldn't load categories: ${error}`
+              : query.trim()
+              ? 'No categories match your search'
+              : 'No categories available yet'}
+          </Text>
+        ) : null}
         <View style={styles.card}>
           {categories.map((category, index) => (
             <Pressable
@@ -53,7 +63,7 @@ export function CategoryBrowseScreen({ navigation }: Props) {
               }
             >
               <View style={styles.iconWrapper}>
-                <Icon name={category.icon} size={22} color={colors.primary} />
+                <Icon name="package" size={22} color={colors.primary} />
               </View>
               <View style={styles.textColumn}>
                 <Text style={styles.categoryName}>{category.name}</Text>

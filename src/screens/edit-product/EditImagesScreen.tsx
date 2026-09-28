@@ -16,9 +16,9 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'EditImages'>;
 const MAX_GALLERY = 4;
 
 const REQUIREMENTS = [
-  'Minimum size: 800×800 pixels',
+  'Recommended size: 800×800 pixels or larger',
   'Accepted: JPG, PNG, WEBP',
-  'Max file size: 5MB per image',
+  'Max file size: 10MB per image',
   'Clear product view on white/plain background',
 ];
 

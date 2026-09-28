@@ -1,28 +1,29 @@
-import React, { useMemo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ProductListRow } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { CATEGORIES } from '../../data/categories';
-import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { applyCatalogFilters, useProductCatalog } from '../../context/ProductCatalogContext';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CategoryProductListing'>;
 
 export function CategoryProductListingScreen({ navigation, route }: Props) {
   const { categoryId } = route.params;
-  const { products } = useProductCatalog();
-  const category = CATEGORIES.find(item => item.id === categoryId);
+  const { products, categories, catalogFilters } = useProductCatalog();
+  const category = categories.find(item => item.id === categoryId);
+  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
 
   const categoryProducts = useMemo(
-    () => products.filter(product => product.categoryId === categoryId),
-    [products, categoryId],
+    () =>
+      applyCatalogFilters(products, { ...catalogFilters, categoryIds: [] }).filter(
+        product => product.categoryId === categoryId && (!subcategoryId || product.subcategoryId === subcategoryId),
+      ),
+    [products, catalogFilters, categoryId, subcategoryId],
   );
-
-  const breadcrumbHead = category?.name.split(' & ')[0] ?? 'Category';
-  const breadcrumbTail = category?.subcategories[0]?.name ?? category?.name ?? '';
+  const subcategories = category?.subcategories ?? [];
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -30,9 +31,15 @@ export function CategoryProductListingScreen({ navigation, route }: Props) {
 
       <View style={styles.breadcrumbRow}>
         <View style={styles.breadcrumbTextRow}>
-          <Text style={styles.breadcrumbText}>{breadcrumbHead}</Text>
-          <Icon name="chevron-right" size={12} color={colors.textTertiary} />
-          <Text style={styles.breadcrumbActive}>{breadcrumbTail}</Text>
+          <Text style={styles.breadcrumbText}>{category?.name ?? 'Category'}</Text>
+          {subcategoryId ? (
+            <>
+              <Icon name="chevron-right" size={12} color={colors.textTertiary} />
+              <Text style={styles.breadcrumbActive}>
+                {subcategories.find(item => item.id === subcategoryId)?.name ?? ''}
+              </Text>
+            </>
+          ) : null}
         </View>
         <View style={styles.breadcrumbRight}>
           <Text style={styles.countText}>{categoryProducts.length} products</Text>
@@ -41,6 +48,28 @@ export function CategoryProductListingScreen({ navigation, route }: Props) {
           </Pressable>
         </View>
       </View>
+
+      {subcategories.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.subcategoryBar}
+          contentContainerStyle={styles.subcategoryRow}
+        >
+          {[{ id: null as string | null, name: 'All' }, ...subcategories].map(item => {
+            const active = item.id === subcategoryId;
+            return (
+              <Pressable
+                key={item.id ?? 'all'}
+                onPress={() => setSubcategoryId(item.id)}
+                style={[styles.subcategoryChip, active && styles.subcategoryChipActive]}
+              >
+                <Text style={[styles.countText, active && styles.subcategoryChipTextActive]}>{item.name}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
 
       <FlatList
         data={categoryProducts}
@@ -64,6 +93,32 @@ export function CategoryProductListingScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  subcategoryBar: {
+    flexGrow: 0,
+    backgroundColor: colors.white,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  subcategoryRow: {
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
+  },
+  subcategoryChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  subcategoryChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySurface,
+  },
+  subcategoryChipTextActive: {
+    color: colors.primary,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: colors.surface,

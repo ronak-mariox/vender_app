@@ -12,23 +12,16 @@ import { FlexButton } from './FlexButton';
 type Props = NativeStackScreenProps<AuthStackParamList, 'NewOrders'>;
 
 export function NewOrdersScreen({ navigation }: Props) {
-  const { ordersByStatus, acceptOrder, rejectOrder, acceptAllNew } = useOrders();
-  const newOrders = ordersByStatus(['new']);
+  const { ordersByStatus, acceptOrder, acceptAllNew, isOrderPending } = useOrders();
+  const newOrders = ordersByStatus(['placed']);
   const [acceptingAll, setAcceptingAll] = useState(false);
 
   async function handleAccept(orderId: string) {
+    if (isOrderPending(orderId) || acceptingAll) return;
     try {
       await acceptOrder(orderId);
     } catch (err) {
       Alert.alert('Could not accept order', getApiErrorMessage(err));
-    }
-  }
-
-  async function handleReject(orderId: string) {
-    try {
-      await rejectOrder(orderId);
-    } catch (err) {
-      Alert.alert('Could not reject order', getApiErrorMessage(err));
     }
   }
 
@@ -51,8 +44,9 @@ export function NewOrdersScreen({ navigation }: Props) {
       pill={{ label: `${newOrders.length} NEW`, color: colors.white, background: colors.error }}
       banner={{
         variant: 'info',
-        message: 'Accept or reject within 5 minutes to maintain your acceptance rate.',
+        message: 'Accept or reject new orders promptly — customers are waiting for confirmation.',
       }}
+      emptyMessage="No new orders right now"
       orders={newOrders}
       onOrderPress={orderId => navigation.navigate('NewOrderReceived', { orderId })}
       renderOrderExtra={order => (
@@ -63,10 +57,12 @@ export function NewOrdersScreen({ navigation }: Props) {
             background={colors.primary}
             textColor={colors.white}
             flex={1.03}
+            disabled={isOrderPending(order.id) || acceptingAll}
           />
           <FlexButton
             label="Reject"
-            onPress={() => handleReject(order.id)}
+            onPress={() => navigation.navigate('RejectReason', { orderId: order.id })}
+            disabled={isOrderPending(order.id) || acceptingAll}
             background={colors.errorSurface}
             textColor={colors.error}
             borderColor={colors.errorBorder}

@@ -22,12 +22,17 @@ const REQUIREMENTS = [
 const SOURCES: { icon: IconName; label: string; source: 'camera' | 'gallery' }[] = [
   { icon: 'camera', label: 'Camera', source: 'camera' },
   { icon: 'image', label: 'Gallery', source: 'gallery' },
-  { icon: 'file-text', label: 'Files', source: 'gallery' },
 ];
 
 export function StoreLogoUploadScreen({ navigation }: Props) {
   const { data, setLogoUploaded } = useStoreSetup();
   const storeName = data.profile?.storeName ?? 'Your Store';
+  const previewMeta = [
+    data.profile?.primaryCategory,
+    data.profile?.avgPrepTime ? `${data.profile.avgPrepTime} min` : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const [uploading, setUploading] = useState(false);
 
   async function handlePick(source: 'camera' | 'gallery') {
@@ -81,15 +86,15 @@ export function StoreLogoUploadScreen({ navigation }: Props) {
           <Text style={styles.sectionTitle}>Preview — Store Card</Text>
           <View style={styles.previewRow}>
             <View style={styles.previewAvatar}>
-              <Icon name="home" size={22} color={colors.white} />
+              {data.logoUrl ? (
+                <Image source={{ uri: resolveAssetUrl(data.logoUrl) }} style={styles.avatarImage} />
+              ) : (
+                <Icon name="home" size={22} color={colors.white} />
+              )}
             </View>
             <View style={styles.previewTextColumn}>
               <Text style={styles.previewName}>{storeName}</Text>
-              <Text style={styles.previewMeta}>Grocery · Dadar West · 30 min</Text>
-              <View style={styles.previewRatingRow}>
-                <Text style={styles.previewRating}>★ 4.8</Text>
-                <Text style={styles.previewRatingCount}>(142)</Text>
-              </View>
+              {previewMeta ? <Text style={styles.previewMeta}>{previewMeta}</Text> : null}
             </View>
           </View>
         </View>
@@ -227,6 +232,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   previewTextColumn: {
     flex: 1,
@@ -238,20 +244,6 @@ const styles = StyleSheet.create({
   },
   previewMeta: {
     ...typography.caption,
-    color: colors.textSecondary,
-  },
-  previewRatingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingTop: 2,
-  },
-  previewRating: {
-    ...typography.tinyBold,
-    color: colors.textPrimary,
-  },
-  previewRatingCount: {
-    ...typography.tiny,
     color: colors.textSecondary,
   },
   card: {

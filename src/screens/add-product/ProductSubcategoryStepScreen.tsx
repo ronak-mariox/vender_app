@@ -5,7 +5,7 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { AddProductHeader, Button, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { ADD_PRODUCT_TOTAL_STEPS, useProductDraft } from '../../context/ProductDraftContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductSubcategoryStep'>;
@@ -37,7 +37,7 @@ export function ProductSubcategoryStepScreen({ navigation, route }: Props) {
         title="Sub-category"
         currentStep={3}
         onBack={() => navigation.goBack()}
-        onSaveDraft={() => navigation.navigate('ProductCatalog')}
+        totalSteps={ADD_PRODUCT_TOTAL_STEPS}
       />
 
       <View style={styles.breadcrumbRow}>

@@ -1,67 +1,97 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { OrderRow } from '../../components';
-import { Icon, IconName } from '../../icons/Icon';
-import { Order, OrderStatus, useOrders } from '../../context/OrdersContext';
+import { InfoBanner, OrderRow } from '../../components';
+import { Icon } from '../../icons/Icon';
+import { Order, ORDER_STATUS_META, OrderStatus, useOrders } from '../../context/OrdersContext';
+import { useNotifications } from '../../context/NotificationsContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
-import { openOrder } from './navigateToOrder';
+import { openOrder } from './orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OrdersList'>;
 
-type TabKey = 'all' | 'new' | 'active' | 'done' | 'cancelled' | 'failed';
+type TabKey = 'all' | 'new' | 'preparing' | 'ready' | 'out' | 'done' | 'cancelled';
 
-const ACTIVE_STATUSES: OrderStatus[] = [
-  'preparing',
-  'quality-check',
-  'packing',
-  'ready-for-dispatch',
-  'dispatched',
-];
+const TAB_STATUSES: Record<Exclude<TabKey, 'all'>, OrderStatus[]> = {
+  new: ['placed'],
+  preparing: ['accepted', 'preparing'],
+  ready: ['ready_for_pickup'],
+  out: ['out_for_delivery'],
+  done: ['delivered'],
+  cancelled: ['cancelled', 'rejected'],
+};
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'new', label: 'New' },
-  { key: 'active', label: 'Active' },
-  { key: 'done', label: 'Done' },
+  { key: 'preparing', label: 'Preparing' },
+  { key: 'ready', label: 'Ready' },
+  { key: 'out', label: 'Out for delivery' },
+  { key: 'done', label: 'Completed' },
   { key: 'cancelled', label: 'Cancelled' },
-  { key: 'failed', label: 'Failed' },
 ];
 
 type SummaryTile = {
-  status: OrderStatus;
+  key: Exclude<TabKey, 'all'>;
   label: string;
-  icon: IconName;
-  color: string;
-  background: string;
   target: keyof AuthStackParamList;
 };
 
 const SUMMARY_TILES: SummaryTile[] = [
-  { status: 'new', label: 'New', icon: 'shopping-cart', color: '#1570EF', background: '#EFF8FF', target: 'NewOrders' },
-  { status: 'preparing', label: 'Preparing', icon: 'package', color: colors.warningDark, background: colors.warningSurface, target: 'PreparingOrders' },
-  { status: 'quality-check', label: 'Quality', icon: 'check-circle', color: '#7C3AED', background: '#F5F3FF', target: 'QualityCheckOrders' },
-  { status: 'packing', label: 'Packing', icon: 'layers', color: '#EA580C', background: '#FFF7ED', target: 'PackingOrders' },
-  { status: 'ready-for-dispatch', label: 'Ready', icon: 'truck', color: '#0891B2', background: '#ECFEFF', target: 'ReadyForDispatchOrders' },
-  { status: 'dispatched', label: 'Dispatched', icon: 'truck', color: '#4338CA', background: '#EEF2FF', target: 'DispatchedOrders' },
-  { status: 'completed', label: 'Completed', icon: 'check-circle', color: colors.primary, background: colors.primarySurface, target: 'CompletedOrders' },
+  { key: 'new', label: 'New', target: 'NewOrders' },
+  { key: 'preparing', label: 'Preparing', target: 'PreparingOrders' },
+  { key: 'ready', label: 'Ready', target: 'ReadyForDispatchOrders' },
+  { key: 'out', label: 'On the way', target: 'DispatchedOrders' },
+  { key: 'done', label: 'Completed', target: 'CompletedOrders' },
+  { key: 'cancelled', label: 'Cancelled', target: 'CancelledOrders' },
 ];
+
+const ALL_STATUSES = Object.keys(ORDER_STATUS_META) as OrderStatus[];
 
 function matchesTab(order: Order, tab: TabKey) {
   if (tab === 'all') return true;
-  if (tab === 'new') return order.status === 'new';
-  if (tab === 'active') return ACTIVE_STATUSES.includes(order.status);
-  if (tab === 'done') return order.status === 'completed';
-  if (tab === 'cancelled') return order.status === 'cancelled';
-  return order.status === 'failed';
+  return TAB_STATUSES[tab].includes(order.status);
 }
 
 export function OrdersListScreen({ navigation }: Props) {
-  const { orders } = useOrders();
+  const { orders, loading, error, refreshOrders } = useOrders();
+  const { notifications } = useNotifications();
+  const hasUnread = notifications.some(item => !item.read);
   const [tab, setTab] = useState<TabKey>('all');
   const [query, setQuery] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<Set<OrderStatus>>(() => new Set());
+  const [refreshing, setRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshOrders().catch(() => undefined);
+    }, [refreshOrders]),
+  );
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshOrders();
+    } catch {
+      // surfaced via context error
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const tabCounts = useMemo(
     () =>
@@ -72,41 +102,48 @@ export function OrdersListScreen({ navigation }: Props) {
     [orders],
   );
 
-  const tileCounts = useMemo(
-    () =>
-      SUMMARY_TILES.reduce<Record<OrderStatus, number>>((acc, tile) => {
-        acc[tile.status] = orders.filter(order => order.status === tile.status).length;
-        return acc;
-      }, {} as Record<OrderStatus, number>),
-    [orders],
-  );
-
   const visibleOrders = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return orders.filter(order => {
       if (!matchesTab(order, tab)) return false;
+      if (statusFilter.size > 0 && !statusFilter.has(order.status)) return false;
       if (!normalizedQuery) return true;
       return (
-        order.id.toLowerCase().includes(normalizedQuery) ||
+        order.orderNumber.toLowerCase().includes(normalizedQuery) ||
         order.customerName.toLowerCase().includes(normalizedQuery) ||
         order.location.toLowerCase().includes(normalizedQuery)
       );
     });
-  }, [orders, tab, query]);
+  }, [orders, tab, query, statusFilter]);
+
+  function toggleStatusFilter(status: OrderStatus) {
+    setStatusFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
+        <Pressable onPress={() => navigation.goBack()} hitSlop={8} style={styles.iconButton}>
+          <Icon name="arrow-left" size={18} color={colors.textPrimary} />
+        </Pressable>
         <View style={styles.headerTextColumn}>
           <Text style={styles.headerTitle}>Orders</Text>
-          <Text style={styles.headerSubtitle}>Today · 06 Sep 2026</Text>
+          <Text style={styles.headerSubtitle}>{orders.length} orders</Text>
         </View>
-        <Pressable style={styles.iconButton} onPress={() => Alert.alert('Notifications', 'Coming soon.')}>
+        <Pressable style={styles.iconButton} onPress={() => navigation.navigate('Notifications')}>
           <Icon name="bell" size={16} color={colors.textPrimary} />
-          <View style={styles.notificationDot} />
+          {hasUnread ? <View style={styles.notificationDot} /> : null}
         </Pressable>
-        <Pressable style={styles.iconButton} onPress={() => Alert.alert('Filter Orders', 'Coming soon.')}>
-          <Icon name="sliders" size={15} color={colors.textPrimary} />
+        <Pressable
+          style={[styles.iconButton, statusFilter.size > 0 && styles.iconButtonActive]}
+          onPress={() => setFilterOpen(true)}
+        >
+          <Icon name="sliders" size={15} color={statusFilter.size > 0 ? colors.primary : colors.textPrimary} />
         </Pressable>
       </View>
 
@@ -141,33 +178,84 @@ export function OrdersListScreen({ navigation }: Props) {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRow}>
-        {SUMMARY_TILES.map(tile => (
-          <Pressable
-            key={tile.status}
-            style={[styles.summaryTile, { backgroundColor: tile.background }]}
-            onPress={() => navigation.navigate(tile.target as never)}
-          >
-            <View style={styles.summaryTileTop}>
-              <Icon name={tile.icon} size={13} color={tile.color} />
-              {tile.status === 'new' && tileCounts[tile.status] > 0 ? <View style={styles.summaryDot} /> : null}
-            </View>
-            <Text style={[styles.summaryValue, { color: tile.color }]}>{tileCounts[tile.status]}</Text>
-            <Text style={[styles.summaryLabel, { color: tile.color }]}>{tile.label}</Text>
-          </Pressable>
-        ))}
+        {SUMMARY_TILES.map(tile => {
+          const meta = ORDER_STATUS_META[TAB_STATUSES[tile.key][0]];
+          return (
+            <Pressable
+              key={tile.key}
+              style={[styles.summaryTile, { backgroundColor: meta.background }]}
+              onPress={() => navigation.navigate(tile.target as never)}
+            >
+              <View style={styles.summaryTileTop}>
+                <Icon name={meta.icon} size={13} color={meta.color} />
+                {tile.key === 'new' && tabCounts.new > 0 ? <View style={styles.summaryDot} /> : null}
+              </View>
+              <Text style={[styles.summaryValue, { color: meta.color }]}>{tabCounts[tile.key]}</Text>
+              <Text style={[styles.summaryLabel, { color: meta.color }]}>{tile.label}</Text>
+            </Pressable>
+          );
+        })}
       </ScrollView>
 
-      <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.list}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      >
+        {error && orders.length === 0 ? (
+          <View style={styles.bannerWrapper}>
+            <InfoBanner variant="error" message={error} />
+          </View>
+        ) : null}
         {visibleOrders.map(order => (
           <OrderRow key={order.id} order={order} onPress={() => openOrder(navigation, order)} />
         ))}
         {visibleOrders.length === 0 ? (
           <View style={styles.emptyState}>
-            <Icon name="package" size={32} color={colors.textTertiary} />
-            <Text style={styles.emptyText}>No orders here</Text>
+            {loading && !refreshing ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <>
+                <Icon name="package" size={32} color={colors.textTertiary} />
+                <Text style={styles.emptyText}>
+                  {orders.length === 0 ? 'No orders yet' : 'No orders match this view'}
+                </Text>
+              </>
+            )}
           </View>
         ) : null}
       </ScrollView>
+
+      <Modal visible={filterOpen} transparent animationType="fade" onRequestClose={() => setFilterOpen(false)}>
+        <Pressable style={styles.menuBackdrop} onPress={() => setFilterOpen(false)}>
+          <Pressable style={styles.menuSheetWrapper} onPress={event => event.stopPropagation()}>
+            <SafeAreaView edges={['bottom']} style={styles.menuSheet}>
+              <View style={styles.menuHandle} />
+              <Text style={styles.menuTitle}>Filter by status</Text>
+              {ALL_STATUSES.map(status => {
+                const meta = ORDER_STATUS_META[status];
+                const checked = statusFilter.has(status);
+                return (
+                  <Pressable key={status} style={styles.menuOption} onPress={() => toggleStatusFilter(status)}>
+                    <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                      {checked ? <Icon name="check" size={12} color={colors.white} strokeWidth={3} /> : null}
+                    </View>
+                    <Text style={styles.menuOptionText}>{meta.label}</Text>
+                  </Pressable>
+                );
+              })}
+              <View style={styles.menuFooter}>
+                <Pressable onPress={() => setStatusFilter(new Set())} hitSlop={8}>
+                  <Text style={styles.menuClear}>Clear</Text>
+                </Pressable>
+                <Pressable onPress={() => setFilterOpen(false)} hitSlop={8}>
+                  <Text style={styles.menuDone}>Done</Text>
+                </Pressable>
+              </View>
+            </SafeAreaView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -209,6 +297,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  iconButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySurface,
   },
   notificationDot: {
     position: 'absolute',
@@ -272,7 +364,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   summaryTile: {
-    width: 76,
+    width: 84,
     borderRadius: radii.md,
     padding: spacing.md,
     gap: 2,
@@ -300,6 +392,10 @@ const styles = StyleSheet.create({
   list: {
     flex: 1,
   },
+  bannerWrapper: {
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.md,
+  },
   emptyState: {
     alignItems: 'center',
     gap: spacing.md,
@@ -308,5 +404,69 @@ const styles = StyleSheet.create({
   emptyText: {
     ...typography.body,
     color: colors.textSecondary,
+  },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  menuSheetWrapper: {
+    width: '100%',
+  },
+  menuSheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+  },
+  menuHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 9999,
+    backgroundColor: colors.border,
+    alignSelf: 'center',
+    marginBottom: spacing.md,
+  },
+  menuTitle: {
+    ...typography.bodySemibold,
+    color: colors.textPrimary,
+    paddingBottom: spacing.sm,
+  },
+  menuOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: radii.sm,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  menuOptionText: {
+    ...typography.label,
+    color: colors.textPrimary,
+  },
+  menuFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.lg,
+  },
+  menuClear: {
+    ...typography.labelSemibold,
+    color: colors.textSecondary,
+  },
+  menuDone: {
+    ...typography.labelSemibold,
+    color: colors.primary,
   },
 });

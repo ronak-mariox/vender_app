@@ -15,6 +15,7 @@ export function PriceUpdatedScreen({ navigation, route }: Props) {
   const product = products.find(item => item.id === productId);
   if (!product) return null;
 
+  const multiVariant = (product.variants?.length ?? 0) > 1;
   const discountPct = product.mrp > 0 ? ((product.mrp - product.sellingPrice) / product.mrp) * 100 : 0;
 
   return (
@@ -23,14 +24,14 @@ export function PriceUpdatedScreen({ navigation, route }: Props) {
       iconColor={colors.primary}
       iconBg={colors.primarySurface}
       iconRingColor={colors.primaryBorder}
-      heading="Price Updated!"
+      heading={headline === 'Tax' ? 'Tax Updated!' : 'Price Updated!'}
       subtitle={message}
       footer={
         <View style={styles.footerColumn}>
           <View style={styles.fullWidthRow}>
             <FlexButton
               label="View Product"
-              onPress={() => navigation.replace('ProductPricingDetail', { productId })}
+              onPress={() => navigation.popTo('ProductPricingDetail', { productId })}
               background={colors.white}
               textColor={colors.primary}
               borderColor={colors.primary}
@@ -40,7 +41,7 @@ export function PriceUpdatedScreen({ navigation, route }: Props) {
           <View style={styles.fullWidthRow}>
             <FlexButton
               label="Update More Prices"
-              onPress={() => navigation.reset({ index: 0, routes: [{ name: 'PricingOverview' }] })}
+              onPress={() => navigation.popTo('PricingOverview')}
               background={colors.primary}
               textColor={colors.white}
               flex={1}
@@ -49,23 +50,29 @@ export function PriceUpdatedScreen({ navigation, route }: Props) {
         </View>
       }
     >
-      <View style={styles.card}>
-        <Text style={styles.title}>Updated Details</Text>
-        <View style={styles.row}>
-          <Text style={styles.label}>New {headline}</Text>
-          <Text style={styles.value}>
-            {headline === 'Tax' ? `${product.gstRate}% GST` : `₹${headline === 'MRP' ? product.mrp : product.sellingPrice}`}
-          </Text>
+      {multiVariant ? null : (
+        <View style={styles.card}>
+          <Text style={styles.title}>Updated Details</Text>
+          <View style={styles.row}>
+            <Text style={styles.label}>{headline === 'Price' ? 'Selling Price' : `New ${headline}`}</Text>
+            <Text style={styles.value}>
+              {headline === 'Tax'
+                ? `${product.gstRate ?? '0'}% GST`
+                : headline === 'MRP'
+                ? `₹${product.mrp}`
+                : `₹${product.sellingPrice}`}
+            </Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.label}>Discount</Text>
+            <Text style={styles.value}>{discountPct.toFixed(1)}%</Text>
+          </View>
+          <View style={[styles.row, styles.rowLast]}>
+            <Text style={styles.label}>Effective</Text>
+            <Text style={styles.value}>Immediately</Text>
+          </View>
         </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Discount</Text>
-          <Text style={styles.value}>{discountPct.toFixed(1)}%</Text>
-        </View>
-        <View style={[styles.row, styles.rowLast]}>
-          <Text style={styles.label}>Effective</Text>
-          <Text style={styles.value}>Immediately</Text>
-        </View>
-      </View>
+      )}
     </FlowStatusScreen>
   );
 }

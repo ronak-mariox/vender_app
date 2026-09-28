@@ -1,29 +1,46 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Checkbox } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useOffers } from '../../context/OffersContext';
+import { getApiErrorMessage } from '../../services/api';
+import { formatINR } from './offerFormat';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'DeleteOffer'>;
 
 export function DeleteOfferScreen({ navigation, route }: Props) {
   const { offerId } = route.params;
-  const { getOffer, deleteOffer } = useOffers();
+  const { getOffer, deleteOffer, isOfferPending } = useOffers();
   const offer = getOffer(offerId);
   const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = isOfferPending(offerId);
 
   function handleClose() {
+    if (pending) return;
     navigation.goBack();
   }
 
-  function handleConfirm() {
-    if (!confirmed) return;
-    deleteOffer(offerId);
-    navigation.navigate('OffersOverview');
+  async function handleConfirm() {
+    if (!confirmed || pending) return;
+    setError(null);
+    try {
+      await deleteOffer(offerId);
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Could not delete the offer.'));
+      return;
+    }
+    const state = navigation.getState();
+    const previous = state.routes[state.index - 1];
+    if (previous?.name === 'OfferDetail') {
+      navigation.pop(2);
+    } else {
+      navigation.goBack();
+    }
   }
 
   return (
@@ -38,7 +55,7 @@ export function DeleteOfferScreen({ navigation, route }: Props) {
 
           <Text style={styles.heading}>Delete Offer?</Text>
           <Text style={styles.subtitle}>
-            This action cannot be undone. {offer?.name || 'This offer'} will be permanently deleted.
+            This action cannot be undone. {offer?.title || 'This offer'} will be permanently deleted.
           </Text>
 
           <View style={styles.dataBox}>
@@ -49,7 +66,7 @@ export function DeleteOfferScreen({ navigation, route }: Props) {
                 <Text style={styles.dataStatLabel}>Total uses</Text>
               </View>
               <View style={styles.dataStat}>
-                <Text style={styles.dataStatValue}>₹{(offer?.revenueGenerated ?? 0).toLocaleString('en-IN')}</Text>
+                <Text style={styles.dataStatValue}>{formatINR(offer?.revenueGenerated ?? 0)}</Text>
                 <Text style={styles.dataStatLabel}>Revenue tracked</Text>
               </View>
             </View>
@@ -64,16 +81,22 @@ export function DeleteOfferScreen({ navigation, route }: Props) {
             </Text>
           </Pressable>
 
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
           <View style={styles.footer}>
-            <Pressable style={styles.cancelButton} onPress={handleClose}>
+            <Pressable style={styles.cancelButton} onPress={handleClose} disabled={pending}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.confirmButton, !confirmed && styles.confirmButtonDisabled]}
+              style={[styles.confirmButton, (!confirmed || pending) && styles.confirmButtonDisabled]}
               onPress={handleConfirm}
-              disabled={!confirmed}
+              disabled={!confirmed || pending}
             >
-              <Text style={styles.confirmButtonText}>Delete Offer</Text>
+              {pending ? (
+                <ActivityIndicator color={colors.white} />
+              ) : (
+                <Text style={styles.confirmButtonText}>Delete Offer</Text>
+              )}
             </Pressable>
           </View>
         </SafeAreaView>
@@ -83,6 +106,12 @@ export function DeleteOfferScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    textAlign: 'center',
+    paddingTop: spacing.lg,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(16,24,40,0.4)',

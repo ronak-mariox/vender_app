@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { useProfile } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus } from '../../context/ProfileContext';
 import { Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon, IconName } from '../../icons/Icon';
 import { colors, radii, spacing, typography } from '../../theme';
@@ -35,6 +35,7 @@ function InfoRow({
 
 export function ProfileOwnerInfoScreen({ navigation }: Props) {
   const { profile } = useProfile();
+  useProfileRefreshOnFocus();
   const { owner } = profile;
 
   return (

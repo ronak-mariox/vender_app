@@ -1,125 +1,97 @@
 import React, { useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { FormSectionCard, StatusChip, StatusTimeline, TimelineStep, TimelineStepStatus } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { Order, ORDER_STATUS_META, OrderStatus, useOrders } from '../../context/OrdersContext';
-import { getApiErrorMessage } from '../../services/api';
+import {
+  Order,
+  ORDER_STATUS_META,
+  OrderStatus,
+  useOrders,
+  VENDOR_CANCELLABLE_STATUSES,
+} from '../../context/OrdersContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 import { FlexButton } from './FlexButton';
+import { driverLabel, formatMoney, placedTime, statusEventTime, useOrder, useOrderAction } from './orderHelpers';
+import { OrderLoadState } from './OrderLoadState';
+import { ProductThumb } from '../../components/ProductThumb';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OrderDetails'>;
 
-const STATUS_RANK: Partial<Record<OrderStatus, number>> = {
-  new: 0,
-  preparing: 1,
-  'quality-check': 2,
-  packing: 3,
-  'ready-for-dispatch': 4,
-  dispatched: 5,
-  completed: 6,
-};
-
-const STEP_SEQUENCE: {
-  label: string;
-  rank: number;
-  historyStatus: OrderStatus;
-  instant?: boolean;
-}[] = [
-  { label: 'Order Placed', rank: 0, historyStatus: 'new', instant: true },
-  { label: 'Order Accepted', rank: 1, historyStatus: 'preparing', instant: true },
-  { label: 'Preparing', rank: 1, historyStatus: 'preparing' },
-  { label: 'Quality Check', rank: 2, historyStatus: 'quality-check' },
-  { label: 'Packing', rank: 3, historyStatus: 'packing' },
-  { label: 'Ready for Dispatch', rank: 4, historyStatus: 'ready-for-dispatch' },
-  { label: 'Dispatched', rank: 5, historyStatus: 'dispatched' },
-  { label: 'Delivered', rank: 6, historyStatus: 'completed', instant: true },
+const STEP_SEQUENCE: { label: string; status: OrderStatus }[] = [
+  { label: 'Order Placed', status: 'placed' },
+  { label: 'Accepted', status: 'accepted' },
+  { label: 'Preparing', status: 'preparing' },
+  { label: 'Ready for Pickup', status: 'ready_for_pickup' },
+  { label: 'Out for Delivery', status: 'out_for_delivery' },
+  { label: 'Delivered', status: 'delivered' },
 ];
 
 function buildTimeline(order: Order): TimelineStep[] {
-  if (order.status === 'cancelled' || order.status === 'failed') {
-    const placed = order.statusHistory.find(event => event.status === 'new');
-    const terminal = order.statusHistory[order.statusHistory.length - 1];
+  if (order.status === 'cancelled' || order.status === 'rejected') {
     return [
-      { label: 'Order Placed', sublabel: placed?.time ?? '', status: 'done' },
+      { label: 'Order Placed', sublabel: placedTime(order), status: 'done' },
       {
-        label: order.status === 'cancelled' ? 'Order Cancelled' : 'Order Failed',
-        sublabel: terminal?.time ?? '',
+        label: order.status === 'cancelled' ? 'Order Cancelled' : 'Order Rejected',
+        sublabel: statusEventTime(order, order.status),
         status: 'active',
       },
     ];
   }
 
-  const currentRank = STATUS_RANK[order.status] ?? 0;
-  return STEP_SEQUENCE.map(step => {
-    const historyEntry = order.statusHistory.find(event => event.status === step.historyStatus);
+  const currentIndex = STEP_SEQUENCE.findIndex(step => step.status === order.status);
+  return STEP_SEQUENCE.map((step, index) => {
     let status: TimelineStepStatus;
-    if (step.instant) {
-      status = currentRank >= step.rank ? 'done' : 'pending';
-    } else if (currentRank > step.rank) {
+    if (index < currentIndex || (index === currentIndex && order.status === 'delivered')) {
       status = 'done';
-    } else if (currentRank === step.rank) {
+    } else if (index === currentIndex) {
       status = 'active';
     } else {
       status = 'pending';
     }
-    return {
-      label: step.label,
-      sublabel: status === 'pending' ? '' : status === 'active' ? 'Now' : historyEntry?.time ?? '',
-      status,
-    };
+    const at = step.status === 'placed' ? placedTime(order) : statusEventTime(order, step.status);
+    return { label: step.label, sublabel: status === 'pending' ? '' : at, status };
   });
 }
 
-const CANCELLABLE_STATUSES: OrderStatus[] = ['preparing', 'quality-check', 'packing', 'ready-for-dispatch'];
-
 export function OrderDetailsScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
-  const {
-    getOrder,
-    acceptOrder,
-    rejectOrder,
-    startQualityCheck,
-    passQualityCheck,
-    failQualityCheck,
-    markPacked,
-    handoverToPartner,
-  } = useOrders();
-  const order = getOrder(orderId);
+  const { order, loading, error, retry } = useOrder(orderId);
+  const { fetchOrder } = useOrders();
+  const { perform, busy } = useOrderAction(navigation);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  async function runAction(action: () => Promise<void>, failureTitle: string) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await action();
-    } catch (err) {
-      Alert.alert(failureTitle, getApiErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const [refreshing, setRefreshing] = useState(false);
 
   if (!order) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()} hitSlop={8} style={styles.iconButton}>
-            <Icon name="arrow-left" size={18} color={colors.textPrimary} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Order Details</Text>
-        </View>
-      </SafeAreaView>
+      <OrderLoadState
+        title="Order Details"
+        loading={loading}
+        error={error}
+        onBack={() => navigation.goBack()}
+        onRetry={retry}
+      />
     );
   }
 
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await fetchOrder(orderId);
+    } catch {
+      // keep showing the cached order
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   const meta = ORDER_STATUS_META[order.status];
-  const subtotal = order.amount - order.deliveryCharge;
   const timeline = buildTimeline(order);
-  const isCancellable = CANCELLABLE_STATUSES.includes(order.status);
+  const isCancellable = VENDOR_CANCELLABLE_STATUSES.includes(order.status);
+  const phone = order.contactPhone || order.customerPhone;
+  const partner = driverLabel(order);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -130,23 +102,23 @@ export function OrderDetailsScreen({ navigation, route }: Props) {
         <View style={styles.headerTextColumn}>
           <View style={styles.headerTitleRow}>
             <Text style={styles.headerTitle}>Order Details</Text>
-            <Text style={styles.headerOrderId}>{order.id}</Text>
+            <Text style={styles.headerOrderId}>{order.orderNumber}</Text>
           </View>
           <StatusChip label={meta.label} color={meta.color} background={meta.background} />
         </View>
-        <Pressable
-          style={styles.iconButton}
-          onPress={() =>
-            isCancellable ? setMenuOpen(true) : Alert.alert('More Options', 'Coming soon.')
-          }
-        >
-          <Icon name="more-vertical" size={17} color={colors.textPrimary} />
-        </Pressable>
+        {isCancellable ? (
+          <Pressable style={styles.iconButton} onPress={() => setMenuOpen(true)}>
+            <Icon name="more-vertical" size={17} color={colors.textPrimary} />
+          </Pressable>
+        ) : null}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      >
         <Text style={styles.metaRow}>
-          {order.timeLabel} · {order.itemsCount} items · ₹{order.amount}
+          {placedTime(order)} · {order.itemsCount} items · {formatMoney(order.amount)}
         </Text>
 
         <FormSectionCard title="Order Timeline">
@@ -156,21 +128,25 @@ export function OrderDetailsScreen({ navigation, route }: Props) {
         <FormSectionCard title={`Products (${order.itemsCount})`}>
           {order.products.map((product, index) => (
             <View
-              key={`${product.name}-${index}`}
+              key={`${product.productId}-${product.variantId}-${index}`}
               style={[styles.productRow, index < order.products.length - 1 && styles.productRowDivider]}
             >
-              <View style={styles.productIcon}>
-                <Icon name="package" size={16} color={colors.textSecondary} />
-              </View>
+              <ProductThumb
+                imageUrl={product.imageUrl}
+                style={styles.productIcon}
+                iconSize={16}
+                iconColor={colors.textSecondary}
+              />
               <View style={styles.productTextColumn}>
                 <Text style={styles.productName} numberOfLines={1}>
                   {product.name}
                 </Text>
                 <Text style={styles.productMeta}>
-                  ₹{product.price} × {product.qty}
+                  {product.variantLabel ? `${product.variantLabel} · ` : ''}
+                  {formatMoney(product.price)} × {product.qty}
                 </Text>
               </View>
-              <Text style={styles.productTotal}>₹{product.price * product.qty}</Text>
+              <Text style={styles.productTotal}>{formatMoney(product.subtotal)}</Text>
             </View>
           ))}
         </FormSectionCard>
@@ -181,23 +157,30 @@ export function OrderDetailsScreen({ navigation, route }: Props) {
               <Icon name="user" size={18} color={colors.primary} />
             </View>
             <View style={styles.customerTextColumn}>
-              <Text style={styles.customerName}>{order.customerName}</Text>
-              <Text style={styles.customerPhone}>{order.customerPhone}</Text>
+              <Text style={styles.customerName}>{order.contactName || order.customerName}</Text>
+              {phone ? <Text style={styles.customerPhone}>{phone}</Text> : null}
             </View>
-            <Pressable
-              style={styles.callButton}
-              onPress={() => Alert.alert('Call Customer', 'Coming soon.')}
-            >
-              <Icon name="phone" size={15} color={colors.white} />
-            </Pressable>
+            {phone ? (
+              <Pressable style={styles.callButton} onPress={() => Linking.openURL(`tel:${phone}`)}>
+                <Icon name="phone" size={15} color={colors.white} />
+              </Pressable>
+            ) : null}
           </View>
           <View style={styles.addressCard}>
             <Icon name="pin" size={15} color={colors.textSecondary} />
             <View style={styles.addressTextColumn}>
               <Text style={styles.addressLine}>{order.addressLine1}</Text>
-              <Text style={styles.addressLine}>{order.addressLine2}</Text>
+              {order.addressLine2 ? <Text style={styles.addressLine}>{order.addressLine2}</Text> : null}
             </View>
           </View>
+          {order.driverId ? (
+            <View style={styles.addressCard}>
+              <Icon name="bike" size={15} color={colors.textSecondary} />
+              <View style={styles.addressTextColumn}>
+                <Text style={styles.addressLine}>{partner}</Text>
+              </View>
+            </View>
+          ) : null}
         </FormSectionCard>
 
         {order.specialInstructions ? (
@@ -211,37 +194,54 @@ export function OrderDetailsScreen({ navigation, route }: Props) {
 
         <FormSectionCard title="Order Summary">
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Subtotal ({order.itemsCount} items)</Text>
-            <Text style={styles.summaryValue}>₹{subtotal}</Text>
+            <Text style={styles.summaryLabel}>Items ({order.itemsCount})</Text>
+            <Text style={styles.summaryValue}>{formatMoney(order.itemsTotal)}</Text>
           </View>
+          {order.taxTotal ? (
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Tax</Text>
+              <Text style={styles.summaryValue}>{formatMoney(order.taxTotal)}</Text>
+            </View>
+          ) : null}
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Delivery Charge</Text>
-            <Text style={styles.summaryValue}>₹{order.deliveryCharge}</Text>
+            <Text style={styles.summaryValue}>{formatMoney(order.deliveryCharge)}</Text>
           </View>
+          {order.platformFee ? (
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Platform Fee</Text>
+              <Text style={styles.summaryValue}>{formatMoney(order.platformFee)}</Text>
+            </View>
+          ) : null}
+          {order.discount ? (
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Discount</Text>
+              <Text style={styles.summaryValue}>−{formatMoney(order.discount)}</Text>
+            </View>
+          ) : null}
           <View style={styles.summaryDivider} />
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryTotalLabel}>Total Paid</Text>
-            <Text style={styles.summaryTotalValue}>₹{order.amount}</Text>
+            <Text style={styles.summaryTotalLabel}>Order Total</Text>
+            <Text style={styles.summaryTotalValue}>{formatMoney(order.amount)}</Text>
           </View>
           <View style={styles.paymentRow}>
             <Icon name="check-circle" size={12} color={colors.primary} />
-            <Text style={styles.paymentText}>{order.paymentMethod}</Text>
+            <Text style={styles.paymentText}>
+              {order.paymentMethod} · {order.paymentStatus}
+            </Text>
           </View>
         </FormSectionCard>
 
-        {order.status === 'cancelled' && order.cancelReason ? (
+        {(order.status === 'cancelled' || order.status === 'rejected') && order.cancelReason ? (
           <Text style={styles.reasonNote}>{order.cancelReason}</Text>
-        ) : null}
-        {order.status === 'failed' && order.failReason ? (
-          <Text style={styles.reasonNote}>{order.failReason}</Text>
         ) : null}
       </ScrollView>
 
-      {order.status === 'new' ? (
+      {order.status === 'placed' ? (
         <View style={styles.footer}>
           <FlexButton
             label="Reject"
-            onPress={() => runAction(() => rejectOrder(order.id), 'Could not reject order')}
+            onPress={() => navigation.navigate('RejectReason', { orderId })}
             background={colors.errorSurface}
             textColor={colors.error}
             borderColor={colors.errorBorder}
@@ -249,8 +249,8 @@ export function OrderDetailsScreen({ navigation, route }: Props) {
             disabled={busy}
           />
           <FlexButton
-            label="Accept"
-            onPress={() => runAction(() => acceptOrder(order.id), 'Could not accept order')}
+            label={busy ? 'Accepting…' : 'Accept'}
+            onPress={() => perform('accept', orderId)}
             background={colors.primary}
             textColor={colors.white}
             flex={1.2}
@@ -259,63 +259,26 @@ export function OrderDetailsScreen({ navigation, route }: Props) {
         </View>
       ) : null}
 
-      {order.status === 'preparing' ? (
+      {order.status === 'accepted' || order.status === 'preparing' ? (
         <View style={styles.footer}>
           <FlexButton
-            label="Start QC →"
-            onPress={() => startQualityCheck(order.id)}
-            background="#7C3AED"
-            textColor={colors.white}
-            flex={1}
-            disabled={busy}
-          />
-        </View>
-      ) : null}
-
-      {order.status === 'quality-check' ? (
-        <View style={styles.footer}>
-          <FlexButton
-            label="Fail QC"
-            onPress={() => runAction(() => failQualityCheck(order.id), 'Could not update order')}
-            background={colors.errorSurface}
-            textColor={colors.error}
-            borderColor={colors.errorBorder}
-            flex={1}
-            disabled={busy}
-          />
-          <FlexButton
-            label="Pass QC → Packing"
-            onPress={() => runAction(() => passQualityCheck(order.id), 'Could not update order')}
+            label={order.status === 'accepted' ? 'Start Preparing →' : 'Continue Packing →'}
+            onPress={() => navigation.navigate('ProductPicking', { orderId })}
             background={colors.primary}
             textColor={colors.white}
-            flex={2}
-            disabled={busy}
+            flex={1}
           />
         </View>
       ) : null}
 
-      {order.status === 'packing' ? (
+      {order.status === 'ready_for_pickup' ? (
         <View style={styles.footer}>
           <FlexButton
-            label="Mark as Packed → Ready for Dispatch"
-            onPress={() => runAction(() => markPacked(order.id), 'Could not update order')}
+            label={order.driverId ? 'Partner assigned — view' : 'Waiting for delivery partner'}
+            onPress={() => navigation.navigate('ReadyForDispatchConfirm', { orderId })}
             background="#0891B2"
             textColor={colors.white}
             flex={1}
-            disabled={busy}
-          />
-        </View>
-      ) : null}
-
-      {order.status === 'ready-for-dispatch' ? (
-        <View style={styles.footer}>
-          <FlexButton
-            label="Handover →"
-            onPress={() => runAction(() => handoverToPartner(order.id), 'Could not update order')}
-            background={colors.primary}
-            textColor={colors.white}
-            flex={1}
-            disabled={busy}
           />
         </View>
       ) : null}

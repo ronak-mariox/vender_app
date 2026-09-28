@@ -1,29 +1,71 @@
-import React, { useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
+import { NavHeader } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
-import { useInventory } from '../../context/InventoryContext';
+import { StockEvent, useInventory } from '../../context/InventoryContext';
+import { getApiErrorMessage } from '../../services/api';
 import { formatEventTimestamp } from '../../utils/time';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductStockDetails'>;
 
-const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * DAY_MS;
+
+function lastSevenDays(events: StockEvent[]) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Array.from({ length: 7 }).map((_, index) => {
+    const start = today.getTime() - (6 - index) * DAY_MS;
+    const end = start + DAY_MS;
+    const dayEvents = events.filter(event => event.timestamp >= start && event.timestamp < end);
+    return {
+      key: start,
+      label: new Date(start).toLocaleDateString('en-IN', { weekday: 'narrow' }),
+      added: dayEvents.filter(event => event.delta > 0).reduce((sum, event) => sum + event.delta, 0),
+      removed: dayEvents.filter(event => event.delta < 0).reduce((sum, event) => sum - event.delta, 0),
+    };
+  });
+}
 
 export function ProductStockDetailsScreen({ navigation, route }: Props) {
   const { productId } = route.params;
-  const { products } = useProductCatalog();
-  const { eventsForProduct } = useInventory();
+  const { products, refreshProducts } = useProductCatalog();
+  const { fetchProductHistory } = useInventory();
   const product = products.find(item => item.id === productId);
-  const events = useMemo(() => eventsForProduct(productId), [eventsForProduct, productId]);
+  const [events, setEvents] = useState<StockEvent[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      setEvents(await fetchProductHistory(productId));
+      setHistoryError(null);
+    } catch (err) {
+      setHistoryError(getApiErrorMessage(err));
+    }
+  }, [fetchProductHistory, productId]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory, product?.stock]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await Promise.all([refreshProducts().catch(() => undefined), loadHistory()]);
+    setRefreshing(false);
+  }
+
+  const week = useMemo(() => lastSevenDays(events), [events]);
 
   if (!product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <NavHeader title="Stock Details" onBack={() => navigation.goBack()} />
         <View style={styles.missingState}>
           <Icon name="package" size={32} color={colors.textTertiary} />
           <Text style={styles.missingText}>This product is no longer available.</Text>
@@ -32,15 +74,16 @@ export function ProductStockDetailsScreen({ navigation, route }: Props) {
     );
   }
 
+  const variants = product.variants ?? [];
   const lastRestock = events.find(event => event.delta > 0);
   const cutoff = Date.now() - THIRTY_DAYS_MS;
-  const sold30d = events
+  const removed30d = events
     .filter(event => event.delta < 0 && event.timestamp >= cutoff)
     .reduce((sum, event) => sum + Math.abs(event.delta), 0);
-  const avgDailySales = sold30d > 0 ? Math.max(1, Math.round(sold30d / 30)) : 0;
-  const daysOfStock = avgDailySales > 0 ? Math.round(product.stock / avgDailySales) : null;
-
-  const barHeight = Math.max(avgDailySales, 1);
+  const added30d = events
+    .filter(event => event.delta > 0 && event.timestamp >= cutoff)
+    .reduce((sum, event) => sum + event.delta, 0);
+  const weekMax = Math.max(1, ...week.map(day => Math.max(day.added, day.removed)));
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -60,65 +103,74 @@ export function ProductStockDetailsScreen({ navigation, route }: Props) {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      >
         <View style={styles.stockCard}>
           <View style={styles.stockMain}>
             <Text style={styles.stockValue}>{product.stock}</Text>
-            <Text style={styles.stockLabel}>Units in Stock</Text>
+            <Text style={styles.stockLabel}>{variants.length > 1 ? 'Total Units' : 'Units in Stock'}</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.stockMetaColumn}>
             <Text style={styles.metaLabel}>Reorder Level</Text>
-            <Text style={styles.metaValue}>{product.reorderLevel} units</Text>
+            <Text style={styles.metaValue}>{product.reorderLevel ? `${product.reorderLevel} units` : 'Not set'}</Text>
             <Text style={[styles.metaLabel, styles.metaLabelSpaced]}>Max Capacity</Text>
-            <Text style={styles.metaValue}>{product.maxStock} units</Text>
+            <Text style={styles.metaValue}>{product.maxStock ? `${product.maxStock} units` : 'Not set'}</Text>
           </View>
         </View>
+
+        {variants.length > 1 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Stock by Variant</Text>
+            {variants.map((variant, index) => (
+              <InfoRow
+                key={variant.id}
+                label={`${variant.size}${variant.isPrimary ? ' (primary)' : ''}`}
+                value={`${variant.stock} units`}
+                last={index === variants.length - 1}
+              />
+            ))}
+          </View>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Stock Information</Text>
-          <InfoRow label="SKU" value={product.sku} mono />
+          <InfoRow label="SKU" value={product.sku || '—'} mono />
           {product.barcode ? <InfoRow label="Barcode" value={product.barcode} mono /> : null}
-          <InfoRow label="Category" value={product.categoryName} />
+          <InfoRow label="Category" value={product.categoryName || '—'} />
           <InfoRow
             label="Last Restocked"
-            value={lastRestock ? `${formatEventTimestamp(lastRestock.timestamp)} · +${lastRestock.delta} units` : 'No records yet'}
+            value={
+              lastRestock ? `${formatEventTimestamp(lastRestock.timestamp)} · +${lastRestock.delta} units` : 'No records yet'
+            }
           />
-          <InfoRow label="Sold (30d)" value={`${sold30d} units`} />
-          <InfoRow label="Avg Daily Sales" value={avgDailySales > 0 ? `~${avgDailySales} units/day` : 'No recent sales data'} />
-          <InfoRow
-            label="Days of Stock"
-            value={daysOfStock !== null ? `~${daysOfStock} days remaining` : 'Not enough data'}
-            last
-          />
+          <InfoRow label="Added (30d)" value={`${added30d} units`} />
+          <InfoRow label="Removed (30d)" value={`${removed30d} units`} last />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Sales (Last 7 Days)</Text>
+          <Text style={styles.cardTitle}>Stock Changes (Last 7 Days)</Text>
+          {historyError ? <Text style={styles.missingText}>{historyError}</Text> : null}
           <View style={styles.chartRow}>
-            {DAY_LABELS.map((day, index) => {
-              const isToday = index === DAY_LABELS.length - 2;
-              const heightPx = 20 + (barHeight * 6) / (index % 3 === 0 ? 1.4 : 1);
-              return (
-                <View key={`${day}-${index}`} style={styles.chartBarColumn}>
-                  <View
-                    style={[
-                      styles.chartBar,
-                      { height: Math.min(60, heightPx) },
-                      isToday && styles.chartBarActive,
-                    ]}
-                  />
+            {week.map(day => (
+              <View key={day.key} style={styles.chartBarColumn}>
+                <View style={styles.chartPair}>
+                  <View style={[styles.chartBar, styles.chartBarActive, { height: `${(day.added / weekMax) * 100}%` }]} />
+                  <View style={[styles.chartBar, styles.chartBarRemoved, { height: `${(day.removed / weekMax) * 100}%` }]} />
                 </View>
-              );
-            })}
+              </View>
+            ))}
           </View>
           <View style={styles.chartLabelsRow}>
-            {DAY_LABELS.map((day, index) => (
-              <Text key={`${day}-label-${index}`} style={styles.chartLabel}>
-                {day}
+            {week.map(day => (
+              <Text key={`label-${day.key}`} style={styles.chartLabel}>
+                {day.label}
               </Text>
             ))}
           </View>
+          <Text style={styles.chartLegend}>Green: units added · Red: units removed (from your stock updates)</Text>
         </View>
 
         <View style={styles.actionsRow}>
@@ -132,7 +184,7 @@ export function ProductStockDetailsScreen({ navigation, route }: Props) {
             style={styles.historyButton}
             onPress={() => navigation.navigate('InventoryHistory', { productId })}
           >
-            <Icon name="refresh-cw" size={18} color={colors.textPrimary} />
+            <Icon name="clock" size={18} color={colors.textPrimary} />
           </Pressable>
         </View>
       </ScrollView>
@@ -295,10 +347,26 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     height: '100%',
   },
-  chartBar: {
+  chartPair: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
     width: '100%',
+    height: '100%',
+  },
+  chartBar: {
+    flex: 1,
+    minHeight: 2,
     borderRadius: 4,
     backgroundColor: colors.primarySurface,
+  },
+  chartBarRemoved: {
+    backgroundColor: colors.error,
+  },
+  chartLegend: {
+    ...typography.tiny,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
   },
   chartBarActive: {
     backgroundColor: colors.primary,

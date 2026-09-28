@@ -1,71 +1,50 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
-import { SettlementStatus, usePayments } from '../../context/PaymentsContext';
+import { usePayments } from '../../context/PaymentsContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
+import { SETTLEMENT_STATUS_META, formatINRExact, formatSignedINRExact, settlementBreakdown } from './settlementHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'SettlementDetails'>;
 
-// Mirrors SettlementRow.tsx's STATUS_META so the status pill here reads identically
-// to the settlement history list.
-const STATUS_META: Record<SettlementStatus, { label: string; background: string; text: string }> = {
-  paid: { label: 'Paid', background: colors.primarySurface, text: colors.primary },
-  pending: { label: 'Pending', background: colors.warningSurface, text: colors.warningDark },
-  failed: { label: 'Failed', background: colors.errorSurface, text: colors.error },
-};
-
-function formatINR(value: number): string {
-  return `₹${Math.round(Math.abs(value)).toLocaleString('en-IN')}`;
-}
-
 export function SettlementDetailsScreen({ navigation, route }: Props) {
   const { settlementId } = route.params;
-  const { getSettlement } = usePayments();
+  const { getSettlement, fetchSettlement } = usePayments();
   const settlement = getSettlement(settlementId);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settlement) return;
+    let cancelled = false;
+    fetchSettlement(settlementId).catch(err => {
+      if (!cancelled) setLoadError(getApiErrorMessage(err, 'Settlement not found'));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settlement, settlementId, fetchSettlement]);
 
   if (!settlement) {
     return (
       <ScreenContainer scrollable={false} backgroundColor={colors.white}>
         <NavHeader title="Settlement Details" onBack={() => navigation.goBack()} />
         <View style={styles.notFound}>
-          <Text style={styles.notFoundText}>Settlement not found</Text>
+          {loadError ? (
+            <Text style={styles.notFoundText}>{loadError}</Text>
+          ) : (
+            <ActivityIndicator color={colors.primary} />
+          )}
         </View>
       </ScreenContainer>
     );
   }
 
-  const status = STATUS_META[settlement.status];
-
-  const breakdownRows: {
-    key: string;
-    label: string;
-    value: string;
-    valueColor?: string;
-    emphasize?: boolean;
-  }[] = [
-    { key: 'gross', label: 'Gross Sales', value: formatINR(settlement.grossSales) },
-    { key: 'returns', label: 'Returns', value: `-${formatINR(settlement.returns)}`, valueColor: colors.error },
-    { key: 'net', label: 'Net Sales', value: formatINR(settlement.netSales), emphasize: true },
-    {
-      key: 'commission',
-      label: `Commission (${settlement.commissionRate}%)`,
-      value: `-${formatINR(settlement.commission)}`,
-      valueColor: colors.error,
-    },
-    {
-      key: 'gst',
-      label: 'GST on Commission',
-      value: `-${formatINR(settlement.gstOnCommission)}`,
-      valueColor: colors.error,
-    },
-  ];
-
-  function handleDownloadInvoice() {
-    navigation.navigate('DownloadInvoice', { settlementId });
-  }
+  const status = SETTLEMENT_STATUS_META[settlement.status];
+  const breakdownRows = settlementBreakdown(settlement);
 
   return (
     <ScreenContainer scrollable={false} backgroundColor={colors.white}>
@@ -73,53 +52,66 @@ export function SettlementDetailsScreen({ navigation, route }: Props) {
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.settlementId}>{settlement.id}</Text>
+            <Text style={styles.settlementId}>{settlement.shortRef}</Text>
             <Text style={styles.dateRange}>{settlement.dateRangeLabel}</Text>
+            <Text style={styles.dateRange}>
+              {settlement.settlementCount} order{settlement.settlementCount === 1 ? '' : 's'} settled
+            </Text>
           </View>
           <View style={[styles.statusPill, { backgroundColor: status.background }]}>
             <Text style={[styles.statusText, { color: status.text }]}>{status.label}</Text>
           </View>
         </View>
 
+        {settlement.status === 'failed' && settlement.failureReason ? (
+          <View style={styles.failureBox}>
+            <Icon name="alert-circle" size={16} color={colors.error} />
+            <Text style={styles.failureText}>{settlement.failureReason}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.breakdownCard}>
           {breakdownRows.map((row, index) => (
             <View key={row.key} style={[styles.breakdownRow, index < breakdownRows.length - 1 && styles.breakdownRowDivider]}>
-              <Text style={[styles.rowLabel, row.emphasize && styles.rowLabelEmphasize]}>{row.label}</Text>
-              <Text
-                style={[
-                  styles.rowValue,
-                  row.emphasize && styles.rowValueEmphasize,
-                  row.valueColor ? { color: row.valueColor } : null,
-                ]}
-              >
-                {row.value}
+              <Text style={styles.rowLabel}>{row.label}</Text>
+              <Text style={[styles.rowValue, row.amount < 0 ? { color: colors.error } : null]}>
+                {formatSignedINRExact(row.amount)}
               </Text>
             </View>
           ))}
           <View style={styles.netPayoutRow}>
             <Text style={styles.netPayoutLabel}>Net Payout</Text>
-            <Text style={styles.netPayoutValue}>{formatINR(settlement.netPayout)}</Text>
+            <Text style={styles.netPayoutValue}>{formatINRExact(settlement.netPayout)}</Text>
           </View>
         </View>
 
-        <View style={styles.bankCard}>
-          <Text style={styles.bankCardTitle}>Bank Details</Text>
-          <View style={styles.bankRow}>
-            <Text style={styles.bankAccountLabel}>{settlement.bankAccountLabel}</Text>
-            <Icon name="credit-card" size={20} color={colors.textSecondary} />
+        {settlement.bankAccountLabel || settlement.transactionRef ? (
+          <View style={styles.bankCard}>
+            <Text style={styles.bankCardTitle}>Payout Details</Text>
+            {settlement.bankAccountLabel ? (
+              <View style={styles.bankRow}>
+                <Text style={styles.bankAccountLabel}>{settlement.bankAccountLabel}</Text>
+                <Icon name="credit-card" size={20} color={colors.textSecondary} />
+              </View>
+            ) : null}
+            {settlement.transactionRef ? (
+              <Text style={styles.transactionRefText}>
+                Transaction Ref: <Text style={styles.transactionRefValue}>{settlement.transactionRef}</Text>
+              </Text>
+            ) : null}
+            {settlement.transactionDateLabel ? (
+              <Text style={styles.transactionRefText}>
+                Paid on: <Text style={styles.transactionRefValue}>{settlement.transactionDateLabel}</Text>
+              </Text>
+            ) : null}
           </View>
-          {settlement.transactionRef ? (
-            <Text style={styles.transactionRefText}>
-              Transaction Ref: <Text style={styles.transactionRefValue}>{settlement.transactionRef}</Text>
-            </Text>
-          ) : null}
-        </View>
+        ) : null}
       </ScrollView>
 
       <View style={styles.footer}>
         <Button
-          label="Download Invoice"
-          onPress={handleDownloadInvoice}
+          label="View Invoice"
+          onPress={() => navigation.navigate('ViewInvoice', { settlementId })}
           icon={<Icon name="file-text" size={18} color={colors.white} />}
         />
       </View>
@@ -172,6 +164,21 @@ const styles = StyleSheet.create({
   statusText: {
     ...typography.labelSemibold,
   },
+  failureBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    marginHorizontal: spacing.xl,
+    padding: spacing.md,
+    borderRadius: radii.sm,
+    backgroundColor: colors.errorSurface,
+  },
+  failureText: {
+    ...typography.caption,
+    color: colors.error,
+    flex: 1,
+  },
   breakdownCard: {
     marginTop: spacing.xl,
     marginHorizontal: spacing.xl,
@@ -195,18 +202,10 @@ const styles = StyleSheet.create({
   rowLabel: {
     ...typography.body,
     color: colors.textSecondary,
-  },
-  rowLabelEmphasize: {
-    ...typography.bodySemibold,
-    color: colors.textSecondary,
+    flex: 1,
   },
   rowValue: {
     ...typography.bodyMedium,
-    color: colors.textPrimary,
-  },
-  rowValueEmphasize: {
-    ...typography.bodySemibold,
-    fontWeight: '700',
     color: colors.textPrimary,
   },
   netPayoutRow: {

@@ -1,9 +1,10 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { useNotifications } from '../../context/NotificationsContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ClearNotifications'>;
@@ -11,14 +12,21 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'ClearNotifications'>;
 export function ClearNotificationsScreen({ navigation }: Props) {
   const { notifications, unreadCount, clearAll } = useNotifications();
   const total = notifications.length;
+  const [clearing, setClearing] = useState(false);
 
   function handleCancel() {
     navigation.goBack();
   }
 
-  function handleClearAll() {
-    clearAll();
-    navigation.goBack();
+  async function handleClearAll() {
+    setClearing(true);
+    try {
+      await clearAll();
+      navigation.goBack();
+    } catch (err) {
+      setClearing(false);
+      Alert.alert('Could not clear notifications', getApiErrorMessage(err, 'Please try again.'));
+    }
   }
 
   return (
@@ -30,7 +38,7 @@ export function ClearNotificationsScreen({ navigation }: Props) {
           <Text style={styles.heading}>Clear all notifications?</Text>
 
           <Text style={styles.body}>
-            This will permanently delete <Text style={styles.bodyBold}>{total} notifications</Text>. This
+            This will permanently delete <Text style={styles.bodyBold}>{total} notification{total === 1 ? '' : 's'}</Text>. This
             action cannot be undone.
           </Text>
 
@@ -46,8 +54,8 @@ export function ClearNotificationsScreen({ navigation }: Props) {
             <Pressable style={styles.cancelButton} onPress={handleCancel}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </Pressable>
-            <Pressable style={styles.clearButton} onPress={handleClearAll}>
-              <Text style={styles.clearButtonText}>Clear All</Text>
+            <Pressable style={styles.clearButton} onPress={handleClearAll} disabled={clearing}>
+              <Text style={styles.clearButtonText}>{clearing ? 'Clearing…' : 'Clear All'}</Text>
             </Pressable>
           </View>
         </SafeAreaView>

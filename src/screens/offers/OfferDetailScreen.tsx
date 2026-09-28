@@ -1,12 +1,21 @@
-import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { useOffers, OfferStatus } from '../../context/OffersContext';
-import { offerTypeLabel } from './OfferCard';
-import { OfferActionsSheet } from './OfferActionsSheet';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { getApiErrorMessage } from '../../services/api';
+import { useOfferActions } from './OffersListLayout';
+import {
+  formatINR,
+  formatOfferDate,
+  formatOfferDateTime,
+  offerEligibleProductCount,
+  offerScopeLabel,
+  offerTypeLabel,
+} from './offerFormat';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OfferDetail'>;
@@ -20,61 +29,112 @@ const STATUS_CHIP_LABEL: Record<OfferStatus, string> = {
 
 export function OfferDetailScreen({ navigation, route }: Props) {
   const { offerId } = route.params;
-  const { getOffer, duplicateOffer } = useOffers();
+  const { getOffer, fetchOffer } = useOffers();
+  const { products, categories } = useProductCatalog();
+  const { openMenu, sheet, editOffer, duplicateOffer, deleteOffer, togglePause, isOfferPending } = useOfferActions();
   const offer = getOffer(offerId);
-  const [actionsVisible, setActionsVisible] = useState(false);
+  const [loading, setLoading] = useState(!offer);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      await fetchOffer(offerId);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(getApiErrorMessage(err, 'Could not load this offer.'));
+    }
+  }, [fetchOffer, offerId]);
+
+  useEffect(() => {
+    load().finally(() => setLoading(false));
+  }, [load]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
+
+  const header = (
+    <View style={styles.header}>
+      <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
+        <Icon name="arrow-left" size={18} color={colors.textPrimary} />
+      </Pressable>
+      <Text style={styles.headerTitle}>Offer Details</Text>
+    </View>
+  );
 
   if (!offer) {
     return (
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        {header}
         <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>This offer could not be found.</Text>
+          {loading ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : (
+            <>
+              <Text style={styles.emptyStateText}>{loadError ?? 'This offer could not be found.'}</Text>
+              <Pressable
+                style={styles.retryButton}
+                onPress={() => {
+                  setLoading(true);
+                  load().finally(() => setLoading(false));
+                }}
+              >
+                <Text style={styles.reportButtonText}>Retry</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       </SafeAreaView>
     );
   }
 
-  function handleEdit() {
-    navigation.navigate('CreateOffer', { offerId });
-  }
+  const pending = isOfferPending(offer.id);
+  const coveredCount = offerEligibleProductCount(offer, products);
+  const detailRows = [
+    { label: 'Applies to', value: `${offerScopeLabel(offer, products, categories)} · ${coveredCount} products` },
+    { label: 'Min. order', value: offer.minOrderValueEnabled ? formatINR(offer.minOrderValue) : 'None' },
+    { label: 'Customers', value: offer.customerEligibility === 'new-only' ? 'New customers only' : 'All customers' },
+    { label: 'Starts', value: formatOfferDateTime(offer.startDate) },
+    { label: 'Ends', value: formatOfferDateTime(offer.endDate) },
+  ];
 
-  function handlePauseResume() {
-    navigation.navigate('PauseOffer', { offerId });
-  }
-
-  function handleDelete() {
-    navigation.navigate('DeleteOffer', { offerId });
-  }
-
-  function handleDuplicateRelaunch() {
-    const clone = duplicateOffer(offerId);
-    navigation.navigate('CreateOffer', { offerId: clone.id });
-  }
-
-  function handleViewFullReport() {
-    Alert.alert('Coming soon', 'Full offer reporting is coming soon.');
-  }
+  const isExpired = offer.status === 'expired';
+  const primaryAction = isExpired
+    ? { label: 'Duplicate & Relaunch', onPress: () => duplicateOffer(offer) }
+    : { label: 'Edit Offer', onPress: () => editOffer(offer) };
+  const secondaryAction =
+    offer.status === 'active' || offer.status === 'paused'
+      ? { label: offer.status === 'paused' ? 'Resume' : 'Pause', onPress: () => togglePause(offer) }
+      : { label: 'Delete', onPress: () => deleteOffer(offer) };
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      {offer.status === 'expired' ? (
+      {header}
+      {isExpired ? (
         <View style={styles.expiredBanner}>
           <Icon name="bell" size={16} color={colors.warningDark} strokeWidth={2} />
           <Text style={styles.expiredBannerText}>
             <Text style={styles.expiredBannerTitle}>Offer Expired</Text>
             {'  '}
             <Text style={styles.expiredBannerMeta}>
-              {offer.name} ended {offer.endDateLabel}
+              {offer.title} ended {formatOfferDate(offer.endDate)}
             </Text>
           </Text>
         </View>
       ) : null}
 
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.body}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />}
+      >
         <View style={styles.card}>
           <View style={styles.cardTopRow}>
             <View style={styles.cardTitleColumn}>
-              <Text style={styles.cardTitle}>{offer.name}</Text>
+              <Text style={styles.cardTitle}>{offer.title}</Text>
               <View style={styles.badgeRow}>
                 <View style={styles.typeBadge}>
                   <Text style={styles.typeBadgeText}>{offerTypeLabel(offer)}</Text>
@@ -84,68 +144,64 @@ export function OfferDetailScreen({ navigation, route }: Props) {
                 </View>
               </View>
             </View>
-            <Pressable onPress={() => setActionsVisible(true)} hitSlop={8} style={styles.menuButton}>
+            <Pressable onPress={() => openMenu(offer)} hitSlop={8} style={styles.menuButton}>
               <Icon name="more-vertical" size={18} color={colors.textSecondary} />
             </Pressable>
           </View>
 
-          <Text style={styles.sectionLabel}>Final Performance</Text>
+          <Text style={styles.sectionLabel}>{isExpired ? 'Final Performance' : 'Performance'}</Text>
           <View style={styles.statsGrid}>
             <View style={styles.statCell}>
               <Text style={styles.statValue}>{offer.usesCount.toLocaleString('en-IN')}</Text>
               <Text style={styles.statLabel}>Total uses</Text>
             </View>
             <View style={styles.statCell}>
-              <Text style={styles.statValue}>₹{offer.revenueGenerated.toLocaleString('en-IN')}</Text>
+              <Text style={styles.statValue}>{formatINR(offer.revenueGenerated)}</Text>
               <Text style={styles.statLabel}>Revenue generated</Text>
             </View>
           </View>
 
-          {offer.topProduct ? (
-            <View style={styles.topProductRow}>
-              <View style={styles.topProductTextColumn}>
-                <Text style={styles.topProductLabel}>Top performing product</Text>
-                <Text style={styles.topProductName}>{offer.topProduct.name}</Text>
-              </View>
-              <View style={styles.topProductStatColumn}>
-                <Text style={styles.topProductUnits}>{offer.topProduct.unitsSold} units</Text>
-                <Text style={styles.topProductSubtext}>sold with offer</Text>
-              </View>
+          <Text style={styles.sectionLabel}>Details</Text>
+          {detailRows.map(row => (
+            <View key={row.label} style={styles.detailRow}>
+              <Text style={styles.detailLabel}>{row.label}</Text>
+              <Text style={styles.detailValue}>{row.value}</Text>
             </View>
-          ) : null}
+          ))}
 
           <View style={styles.footerRow}>
-            <Pressable style={styles.duplicateButton} onPress={handleDuplicateRelaunch}>
-              <Text style={styles.duplicateButtonText}>Duplicate & Relaunch</Text>
+            <Pressable
+              style={[styles.duplicateButton, pending && styles.buttonDisabled]}
+              onPress={primaryAction.onPress}
+              disabled={pending}
+            >
+              <Text style={styles.duplicateButtonText}>{primaryAction.label}</Text>
             </Pressable>
-            <Pressable style={styles.reportButton} onPress={handleViewFullReport}>
-              <Text style={styles.reportButtonText}>View Full Report</Text>
+            <Pressable
+              style={[styles.reportButton, pending && styles.buttonDisabled]}
+              onPress={secondaryAction.onPress}
+              disabled={pending}
+            >
+              {pending ? (
+                <ActivityIndicator color={colors.textPrimary} />
+              ) : (
+                <Text style={styles.reportButtonText}>{secondaryAction.label}</Text>
+              )}
             </Pressable>
           </View>
         </View>
 
-        <View style={styles.suggestionCard}>
-          <Text style={styles.suggestionTitle}>Re-run this offer?</Text>
-          <Text style={styles.suggestionBody}>
-            Duplicate {offer.name} and update the dates to relaunch it for your customers.
-          </Text>
-          {offer.runDaysLabel ? (
-            <View style={styles.suggestionNoteRow}>
-              <View style={styles.suggestionDot} />
-              <Text style={styles.suggestionNote}>{offer.runDaysLabel}</Text>
-            </View>
-          ) : null}
-        </View>
+        {isExpired ? (
+          <View style={styles.suggestionCard}>
+            <Text style={styles.suggestionTitle}>Re-run this offer?</Text>
+            <Text style={styles.suggestionBody}>
+              Duplicate {offer.title} and update the dates to relaunch it for your customers.
+            </Text>
+          </View>
+        ) : null}
       </ScrollView>
 
-      <OfferActionsSheet
-        visible={actionsVisible}
-        offer={offer}
-        onClose={() => setActionsVisible(false)}
-        onEdit={handleEdit}
-        onPauseResume={handlePauseResume}
-        onDelete={handleDelete}
-      />
+      {sheet}
     </SafeAreaView>
   );
 }
@@ -154,6 +210,49 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.white,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.lg,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  headerTitle: {
+    ...typography.h3,
+    fontSize: 18,
+    color: colors.textPrimary,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.lg,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  detailLabel: {
+    ...typography.label,
+    color: colors.textSecondary,
+  },
+  detailValue: {
+    ...typography.labelSemibold,
+    color: colors.textPrimary,
+    flex: 1,
+    textAlign: 'right',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  retryButton: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   emptyState: {
     flex: 1,
@@ -275,40 +374,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     paddingTop: 2,
   },
-  topProductRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    marginTop: spacing.lg,
-  },
-  topProductTextColumn: {
-    gap: 2,
-  },
-  topProductLabel: {
-    ...typography.tiny,
-    color: colors.textSecondary,
-  },
-  topProductName: {
-    ...typography.labelSemibold,
-    color: colors.textPrimary,
-  },
-  topProductStatColumn: {
-    alignItems: 'flex-end',
-    gap: 2,
-  },
-  topProductUnits: {
-    ...typography.labelSemibold,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  topProductSubtext: {
-    ...typography.tiny,
-    color: colors.textSecondary,
-  },
   footerRow: {
     flexDirection: 'row',
     gap: spacing.md,
@@ -358,23 +423,5 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.textSecondary,
     paddingTop: spacing.sm,
-  },
-  suggestionNoteRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    paddingTop: spacing.lg,
-  },
-  suggestionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.primary,
-    marginTop: 5,
-  },
-  suggestionNote: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    flex: 1,
   },
 });

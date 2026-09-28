@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, FormSectionCard, Input, NavHeader, ProgressSteps, ScreenContainer, SelectField } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration, type StoreInfoData } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage, getFieldErrors } from '../../services/api';
+import { api } from '../../services/api';
 import { isRequired, isValidMobile, type FormErrors } from '../../utils/validators';
+import { handleRegistrationSaveError } from './registrationHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'StoreInfo'>;
@@ -14,32 +15,48 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'StoreInfo'>;
 const STORE_TYPES = ['Retail Store', 'Warehouse / Dark Store', 'Home Kitchen', 'Kiosk', 'Online Only'];
 const OPERATING_HOURS = ['9:00 AM – 9:00 PM', '24 Hours', '8:00 AM – 8:00 PM', '10:00 AM – 10:00 PM'];
 
-const DEFAULT_LOCATION: StoreInfoData['location'] = {
-  address: 'Plot 42, MG Road',
-  cityState: 'Dadar West, Mumbai, Maharashtra 400028',
-  latitude: 19.0176,
-  longitude: 72.8459,
-};
+const FIELDS = ['storeName', 'storeAddress', 'landmark', 'contactNumber', 'storeType', 'operatingHours'] as const;
+type Errors = FormErrors<(typeof FIELDS)[number] | 'location'>;
+type StoreInfoForm = Omit<StoreInfoData, 'location'>;
 
-type Errors = FormErrors<'storeName' | 'storeAddress' | 'contactNumber' | 'storeType'>;
+function toForm(info: StoreInfoData): StoreInfoForm {
+  return {
+    storeName: info.storeName,
+    storeAddress: info.storeAddress,
+    landmark: info.landmark,
+    contactNumber: info.contactNumber,
+    storeType: info.storeType,
+    operatingHours: info.operatingHours,
+  };
+}
 
 export function StoreInfoScreen({ navigation }: Props) {
   const { data, updateStoreInfo } = useRegistration();
-  const [form, setForm] = useState<StoreInfoData>(
-    data.storeInfo ?? {
-      storeName: data.businessInfo?.displayName ?? '',
-      storeAddress: data.businessInfo?.addressLine1 ?? '',
-      landmark: '',
-      contactNumber: '',
-      storeType: '',
-      operatingHours: '',
-      location: DEFAULT_LOCATION,
-    },
+  const [form, setForm] = useState<StoreInfoForm>(
+    data.storeInfo
+      ? toForm(data.storeInfo)
+      : {
+          storeName: data.businessInfo?.displayName ?? '',
+          storeAddress: data.businessInfo?.addressLine1 ?? '',
+          landmark: '',
+          contactNumber: data.ownerInfo?.mobile ?? '',
+          storeType: '',
+          operatingHours: '',
+        },
   );
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  const location = data.storeLocation ?? data.storeInfo?.location ?? null;
 
-  function set<K extends keyof StoreInfoData>(key: K, value: StoreInfoData[K]) {
+  useEffect(() => {
+    if (data.storeInfo) setForm(toForm(data.storeInfo));
+  }, [data.storeInfo]);
+
+  useEffect(() => {
+    if (location) setErrors(prev => (prev.location ? { ...prev, location: undefined } : prev));
+  }, [location]);
+
+  function set<K extends keyof StoreInfoForm>(key: K, value: StoreInfoForm[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
     if (key in errors) {
       setErrors(prev => ({ ...prev, [key]: undefined }));
@@ -50,24 +67,34 @@ export function StoreInfoScreen({ navigation }: Props) {
     const nextErrors: Errors = {};
     if (!isRequired(form.storeName)) nextErrors.storeName = 'Enter the store name';
     if (!isRequired(form.storeAddress)) nextErrors.storeAddress = 'Enter the store address';
+    if (!isRequired(form.landmark)) nextErrors.landmark = 'Enter a nearby landmark';
     if (!isValidMobile(form.contactNumber)) nextErrors.contactNumber = 'Enter a valid 10-digit mobile number';
     if (!isRequired(form.storeType)) nextErrors.storeType = 'Select a store type';
+    if (!isRequired(form.operatingHours)) nextErrors.operatingHours = 'Select your operating hours';
+    if (!location) nextErrors.location = 'Set your store location';
 
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0 || !location) return;
 
+    const payload: StoreInfoData = {
+      ...form,
+      storeName: form.storeName.trim(),
+      storeAddress: form.storeAddress.trim(),
+      landmark: form.landmark.trim(),
+      location,
+    };
     setSaving(true);
     try {
-      await api.patch('/vendor/registration/store-info', form);
-      updateStoreInfo(form);
+      await api.patch('/vendor/registration/store-info', payload);
+      updateStoreInfo(payload);
       navigation.navigate('GSTDetails');
     } catch (err) {
-      const fieldErrors = getFieldErrors(err);
-      if (Object.keys(fieldErrors).length > 0) {
-        setErrors(fieldErrors as Errors);
-      } else {
-        setErrors({ form: getApiErrorMessage(err, 'Could not save your store information. Please try again.') });
-      }
+      handleRegistrationSaveError<Errors>(
+        err,
+        setErrors,
+        'Could not save your store information. Please try again.',
+        FIELDS,
+      );
     } finally {
       setSaving(false);
     }
@@ -94,7 +121,7 @@ export function StoreInfoScreen({ navigation }: Props) {
             leftIcon="home"
             value={form.storeName}
             onChangeText={text => set('storeName', text)}
-            placeholder="Sharma Kirana Store"
+            placeholder="Store name"
             error={errors.storeName}
           />
           <Input
@@ -102,14 +129,16 @@ export function StoreInfoScreen({ navigation }: Props) {
             required
             value={form.storeAddress}
             onChangeText={text => set('storeAddress', text)}
-            placeholder="Plot 42, MG Road, Dadar West"
+            placeholder="Shop number, street, area"
             error={errors.storeAddress}
           />
           <Input
             label="Landmark"
+            required
             value={form.landmark}
             onChangeText={text => set('landmark', text)}
-            placeholder="Near Dadar Station"
+            placeholder="A well-known place nearby"
+            error={errors.landmark}
           />
           <Input
             label="Store Contact Number"
@@ -117,7 +146,7 @@ export function StoreInfoScreen({ navigation }: Props) {
             leftIcon="phone"
             value={form.contactNumber}
             onChangeText={text => set('contactNumber', text.replace(/[^0-9]/g, '').slice(0, 10))}
-            placeholder="9876543210"
+            placeholder="10-digit mobile number"
             keyboardType="phone-pad"
             error={errors.contactNumber}
           />
@@ -131,9 +160,11 @@ export function StoreInfoScreen({ navigation }: Props) {
           />
           <SelectField
             label="Operating Hours"
+            required
             value={form.operatingHours}
             options={OPERATING_HOURS}
             onChange={value => set('operatingHours', value)}
+            error={errors.operatingHours}
           />
         </FormSectionCard>
 
@@ -142,15 +173,23 @@ export function StoreInfoScreen({ navigation }: Props) {
             <View style={styles.locationIconWrapper}>
               <Icon name="pin" size={18} color={colors.primary} />
             </View>
-            <View style={styles.locationTextColumn}>
-              <Text style={styles.locationAddress}>{form.location.address}</Text>
-              <Text style={styles.locationCityState}>{form.location.cityState}</Text>
-              <Text style={styles.locationAccuracy}>
-                {form.location.latitude.toFixed(4)}° N, {form.location.longitude.toFixed(4)}° E
-              </Text>
-            </View>
-            <Text style={styles.changeText}>Change</Text>
+            {location ? (
+              <View style={styles.locationTextColumn}>
+                <Text style={styles.locationAddress}>{location.address}</Text>
+                <Text style={styles.locationCityState}>{location.cityState}</Text>
+                <Text style={styles.locationAccuracy}>
+                  Lat {location.latitude.toFixed(6)}, Lng {location.longitude.toFixed(6)}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.locationTextColumn}>
+                <Text style={styles.locationAddress}>No location set</Text>
+                <Text style={styles.locationCityState}>Enter your store address and coordinates</Text>
+              </View>
+            )}
+            <Text style={styles.changeText}>{location ? 'Change' : 'Set'}</Text>
           </Pressable>
+          {errors.location ? <Text style={styles.errorText}>{errors.location}</Text> : null}
         </FormSectionCard>
 
         {errors.form ? <Text style={styles.errorText}>{errors.form}</Text> : null}

@@ -1,63 +1,29 @@
-import React, { useCallback, useState } from 'react';
-import { Alert, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet } from 'react-native';
+import React from 'react';
+import { ScrollView, StyleSheet } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { NavHeader, ScreenContainer } from '../../components';
-import { usePolicies } from '../../context/PoliciesContext';
+import { GST_ON_FEE_PERCENT_LABEL, PLATFORM_FEE_PERCENT_LABEL } from '../../constants/fees';
 import { spacing } from '../../theme';
 import { PolicyMetaBar } from './PolicyMetaBar';
 import { PolicySection } from './PolicySection';
 import { PolicyScrollFooter } from './PolicyScrollFooter';
+import { usePolicyScroll } from './usePolicyScroll';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PolicyTerms'>;
 
 export function PolicyTermsScreen({ navigation }: Props) {
-  const { getDocument, acceptPolicy } = usePolicies();
-  const doc = getDocument('terms');
-
-  const [contentHeight, setContentHeight] = useState(0);
-  const [layoutHeight, setLayoutHeight] = useState(0);
-  const [scrollProgress, setScrollProgress] = useState(0);
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const scrollY = event.nativeEvent.contentOffset.y;
-      const percent =
-        contentHeight <= layoutHeight ? 100 : (scrollY / (contentHeight - layoutHeight)) * 100;
-      setScrollProgress(Math.min(100, Math.max(0, percent)));
-    },
-    [contentHeight, layoutHeight],
-  );
-
-  const handleAccept = useCallback(() => {
-    acceptPolicy('terms');
-    Alert.alert('Accepted', 'Terms & Conditions accepted.');
-  }, [acceptPolicy]);
-
-  const handleDownload = useCallback(() => {
-    Alert.alert('Download PDF', 'Coming soon.');
-  }, []);
+  const { progress, reachedEnd, scrollProps } = usePolicyScroll();
 
   return (
     <ScreenContainer edges={['top', 'left', 'right', 'bottom']}>
       <NavHeader title="Terms & Conditions" onBack={() => navigation.goBack()} />
-      <PolicyMetaBar
-        lastUpdatedLabel={doc.lastUpdatedLabel}
-        effectiveLabel={doc.effectiveLabel}
-        scrollProgress={scrollProgress}
-      />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        onContentSizeChange={(w, h) => setContentHeight(h)}
-        onLayout={e => setLayoutHeight(e.nativeEvent.layout.height)}
-      >
+      <PolicyMetaBar scrollProgress={progress} />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} {...scrollProps}>
         <PolicySection
           heading="1. INTRODUCTION"
           paragraphs={[
-            'Welcome to Verdant, a B2B grocery procurement platform operated by Verdant Technologies Pvt. Ltd. ("Verdant", "we", or "us"). By registering as a vendor on our platform, you agree to be bound by these Terms & Conditions.',
+            'Welcome to Verdant, an online marketplace operated by Verdant ("Verdant", "we", or "us"). By registering as a vendor on our platform, you agree to be bound by these Terms & Conditions.',
             'These terms constitute a legally binding agreement between you (the "Vendor") and Verdant governing your use of the Verdant Vendor application, APIs, and related services. Please read them carefully before proceeding.',
           ]}
         />
@@ -88,15 +54,15 @@ export function PolicyTermsScreen({ navigation }: Props) {
         <PolicySection
           heading="5. ORDER FULFILLMENT"
           paragraphs={[
-            'Upon receiving an order, vendors must acknowledge within 10 minutes and confirm stock availability. Failure to fulfil confirmed orders constitutes a breach and may result in rating penalties.',
-            'Vendors are responsible for packaging goods in hygienic, tamper-evident containers that prevent damage during transit. Verdant-empanelled logistics partners will collect orders from your designated pickup point.',
-            'In the event of partial fulfilment, the vendor must notify Verdant support immediately. Partial orders will be settled at the proportion of items delivered, subject to buyer acceptance.',
+            'Upon receiving an order, vendors must promptly accept or reject it in the app. Failure to fulfil accepted orders constitutes a breach and may affect your account standing.',
+            'Vendors are responsible for packaging goods in hygienic, tamper-evident containers that prevent damage during transit. Delivery partners collect orders from your store once they are marked ready.',
+            'If you cannot fulfil an accepted order, cancel it in the app with a reason as early as possible so the customer is informed.',
           ]}
         />
         <PolicySection
           heading="6. PAYMENTS & SETTLEMENTS"
           paragraphs={[
-            'Settlements are processed weekly every Monday for orders delivered and confirmed by the preceding Sunday. A platform commission of 8% of the net order value plus applicable GST will be deducted from each settlement.',
+            `A settlement is recorded for each delivered order. A platform commission of ${PLATFORM_FEE_PERCENT_LABEL} of the order value plus ${GST_ON_FEE_PERCENT_LABEL} GST on that commission is deducted from each settlement.`,
             'Verdant may withhold settlement amounts for orders under dispute, fraud investigation, or regulatory inquiry. Withheld amounts will be released once the matter is resolved.',
           ]}
         />
@@ -108,12 +74,7 @@ export function PolicyTermsScreen({ navigation }: Props) {
           ]}
         />
       </ScrollView>
-      <PolicyScrollFooter
-        mode="accept-download"
-        scrollProgress={scrollProgress}
-        onAccept={handleAccept}
-        onDownload={handleDownload}
-      />
+      <PolicyScrollFooter canAccept={reachedEnd} onAccept={() => navigation.goBack()} />
     </ScreenContainer>
   );
 }

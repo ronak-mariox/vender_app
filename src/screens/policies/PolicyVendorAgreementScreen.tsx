@@ -1,10 +1,10 @@
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Badge, InfoBanner, NavHeader, ScreenContainer } from '../../components';
+import { NavHeader, ScreenContainer } from '../../components';
 import { Icon, IconName } from '../../icons/Icon';
-import { usePolicies } from '../../context/PoliciesContext';
+import { GST_ON_FEE_PERCENT_LABEL, PLATFORM_FEE_PERCENT_LABEL } from '../../constants/fees';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PolicyVendorAgreement'>;
@@ -17,32 +17,25 @@ type DocRow = {
 };
 
 export function PolicyVendorAgreementScreen({ navigation }: Props) {
-  const { vendorAgreement } = usePolicies();
-
   const documentRows: DocRow[] = [
+    { key: 'terms', icon: 'file-text', label: 'Terms & Conditions', onPress: () => navigation.navigate('PolicyTerms') },
     {
-      key: 'full-agreement',
-      icon: 'file-text',
-      label: 'Full Agreement Text',
-      onPress: () => navigation.navigate('VendorAgreement'),
-    },
-    {
-      key: 'commission-schedule',
-      icon: 'percent',
-      label: 'Commission Schedule',
-      onPress: () => Alert.alert('Commission Schedule', 'Coming soon.'),
-    },
-    {
-      key: 'payout-terms',
+      key: 'settlement',
       icon: 'credit-card',
-      label: 'Payout Terms',
-      onPress: () => Alert.alert('Payout Terms', 'Coming soon.'),
+      label: 'Settlement Policy',
+      onPress: () => navigation.navigate('PolicySettlement'),
     },
     {
-      key: 'code-of-conduct',
+      key: 'cancellation',
+      icon: 'x-circle',
+      label: 'Cancellation Policy',
+      onPress: () => navigation.navigate('PolicyCancellation'),
+    },
+    {
+      key: 'privacy',
       icon: 'shield-check',
-      label: 'Code of Conduct',
-      onPress: () => Alert.alert('Code of Conduct', 'Coming soon.'),
+      label: 'Privacy Policy',
+      onPress: () => navigation.navigate('PolicyPrivacy'),
     },
   ];
 
@@ -50,43 +43,25 @@ export function PolicyVendorAgreementScreen({ navigation }: Props) {
     <ScreenContainer edges={['top', 'left', 'right', 'bottom']}>
       <NavHeader title="Vendor Agreement" onBack={() => navigation.goBack()} />
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {vendorAgreement.newVersionAvailable ? (
-          <InfoBanner
-            variant="warning"
-            message={`New version available — ${vendorAgreement.newVersionLabel} (review required)`}
-          />
-        ) : null}
-
         <View style={styles.card}>
-          <Text style={styles.caption}>This agreement governs your partnership with Verdant.</Text>
-          <View style={styles.versionRow}>
-            <Text style={styles.versionText}>
-              Version {vendorAgreement.version} · Signed: {vendorAgreement.signedLabel}
-            </Text>
-            <Badge label={vendorAgreement.status} tone="success" />
-          </View>
+          <Text style={styles.caption}>
+            This agreement governs your partnership with Verdant. You accepted it during registration.
+          </Text>
           <View style={styles.statsRow}>
             <View style={styles.statCard}>
-              <Text style={[styles.statValue, styles.statValueGreen]}>
-                {vendorAgreement.commissionRate}
-              </Text>
+              <Text style={[styles.statValue, styles.statValueGreen]}>{PLATFORM_FEE_PERCENT_LABEL}</Text>
               <Text style={styles.statLabel}>Commission</Text>
-              <Text style={styles.statSub}>of net sales</Text>
+              <Text style={styles.statSub}>+ {GST_ON_FEE_PERCENT_LABEL} GST on fee</Text>
             </View>
             <View style={styles.statCard}>
-              <Text style={styles.statValue}>{vendorAgreement.settlementCadence}</Text>
+              <Text style={styles.statValue}>Per order</Text>
               <Text style={styles.statLabel}>Settlement</Text>
-              <Text style={styles.statSub}>every Monday</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{vendorAgreement.slaLabel}</Text>
-              <Text style={styles.statLabel}>SLA</Text>
-              <Text style={styles.statSub}>to accept orders</Text>
+              <Text style={styles.statSub}>recorded on delivery</Text>
             </View>
           </View>
         </View>
 
-        <Text style={styles.sectionHeader}>DOCUMENT SECTIONS</Text>
+        <Text style={styles.sectionHeader}>RELATED POLICIES</Text>
         <View style={styles.rowsCard}>
           {documentRows.map((row, index) => (
             <Pressable
@@ -103,14 +78,6 @@ export function PolicyVendorAgreementScreen({ navigation }: Props) {
           ))}
         </View>
       </ScrollView>
-      <View style={styles.footer}>
-        <Pressable
-          style={styles.downloadButton}
-          onPress={() => Alert.alert('Download', 'Coming soon.')}
-        >
-          <Text style={styles.downloadButtonText}>Download Signed Copy</Text>
-        </Pressable>
-      </View>
     </ScreenContainer>
   );
 }
@@ -138,18 +105,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19.5,
     color: colors.textSecondary,
-  },
-  versionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  versionText: {
-    ...typography.captionSemibold,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    flex: 1,
   },
   statsRow: {
     flexDirection: 'row',
@@ -220,22 +175,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textPrimary,
     flex: 1,
-  },
-  footer: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-  },
-  downloadButton: {
-    height: 48,
-    borderRadius: radii.md,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  downloadButtonText: {
-    ...typography.bodySemibold,
-    color: colors.white,
   },
 });

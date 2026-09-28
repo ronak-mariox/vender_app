@@ -1,17 +1,18 @@
 import React from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { useOrders } from '../../context/OrdersContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 import { OrderActionLayout } from './OrderActionLayout';
+import { formatMoney } from './orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CompletedOrders'>;
 
 export function CompletedOrdersScreen({ navigation }: Props) {
   const { ordersByStatus } = useOrders();
-  const completedOrders = ordersByStatus(['completed']);
+  const completedOrders = ordersByStatus(['delivered']);
 
   const revenue = completedOrders.reduce((sum, order) => sum + order.amount, 0);
   const ratings = completedOrders.filter(order => typeof order.rating === 'number').map(order => order.rating as number);
@@ -21,25 +22,30 @@ export function CompletedOrdersScreen({ navigation }: Props) {
     <OrderActionLayout
       title="Completed"
       onBack={() => navigation.goBack()}
-      rightLink={{ label: 'Filter', onPress: () => Alert.alert('Filter Completed', 'Coming soon.') }}
+      emptyMessage="No delivered orders yet"
       orders={completedOrders}
       onOrderPress={orderId => navigation.navigate('OrderDetails', { orderId })}
       beforeOrders={
         <View style={styles.statsRow}>
           <StatTile label="Orders" value={String(completedOrders.length)} tone="neutral" />
-          <StatTile label="Revenue" value={`₹${revenue.toLocaleString('en-IN')}`} tone="success" />
+          <StatTile label="Order Value" value={formatMoney(revenue)} tone="success" />
           <StatTile label="Avg Rating" value={avgRating ? `${avgRating.toFixed(1)}★` : '—'} tone="neutral" />
         </View>
       }
       renderOrderExtra={order =>
-        order.review ? (
+        order.rating != null ? (
           <View style={styles.reviewRow}>
             <View style={styles.starsRow}>
               {[0, 1, 2, 3, 4].map(index => (
-                <Icon key={index} name="star" size={13} color={colors.warning} />
+                <Icon
+                  key={index}
+                  name="star"
+                  size={13}
+                  color={index < Math.round(order.rating ?? 0) ? colors.warning : colors.border}
+                />
               ))}
             </View>
-            <Text style={styles.reviewText}>{order.review}</Text>
+            {order.review ? <Text style={styles.reviewText}>{order.review}</Text> : null}
           </View>
         ) : null
       }

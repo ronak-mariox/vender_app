@@ -1,21 +1,43 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { useOrders } from '../../context/OrdersContext';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 import { FlowStatusScreen } from '../order-flow/FlowStatusScreen';
 import { FlexButton } from '../order-flow/FlexButton';
+import { MAX_ACTION_ATTEMPTS, ORDER_ACTION_LABEL, routeAfterAction, useRunOrderAction } from '../orders/orderHelpers';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OrderActionError'>;
 
-const TIPS = ['Check your internet connection', 'Wait a few seconds and try again', 'If issue persists, contact support'];
+const TIPS = ['Check your internet connection', 'Wait a few seconds and try again', 'If the issue persists, contact support'];
 
 export function OrderActionErrorScreen({ navigation, route }: Props) {
-  const { orderId, actionLabel } = route.params;
+  const { orderId, action, note, message } = route.params;
   const { getOrder } = useOrders();
+  const runAction = useRunOrderAction();
   const order = getOrder(orderId);
-  if (!order) return null;
+  const [retries, setRetries] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  const [lastError, setLastError] = useState(message ?? '');
+  const actionLabel = ORDER_ACTION_LABEL[action];
+  const retriesLeft = MAX_ACTION_ATTEMPTS - retries;
+
+  async function handleRetry() {
+    if (retrying || retriesLeft <= 0) return;
+    setRetrying(true);
+    try {
+      await runAction(action, orderId, note);
+      const target = routeAfterAction(action, orderId, note);
+      navigation.replace(target.name, target.params as never);
+    } catch (err) {
+      setLastError(getApiErrorMessage(err));
+      setRetries(value => value + 1);
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   return (
     <FlowStatusScreen
@@ -26,7 +48,7 @@ export function OrderActionErrorScreen({ navigation, route }: Props) {
       iconBg={colors.errorSurface}
       iconRingColor={colors.errorBorder}
       heading="Action Failed"
-      subtitle={`Could not ${actionLabel.toLowerCase()} ${order.id}. The server returned an error. Your action was not saved.`}
+      subtitle={`Could not ${actionLabel.toLowerCase()}${order ? ` for ${order.orderNumber}` : ''}. Your action was not saved.`}
       footer={
         <View style={styles.footerRow}>
           <FlexButton
@@ -36,13 +58,15 @@ export function OrderActionErrorScreen({ navigation, route }: Props) {
             textColor={colors.textSecondary}
             borderColor={colors.border}
             flex={1}
+            disabled={retrying}
           />
           <FlexButton
-            label="Retry Action"
-            onPress={() => navigation.replace('RetryingAction', { orderId, actionLabel })}
-            background={colors.primary}
+            label={retrying ? 'Retrying…' : retriesLeft > 0 ? 'Retry Action' : 'No retries left'}
+            onPress={handleRetry}
+            background={retriesLeft > 0 ? colors.primary : colors.textTertiary}
             textColor={colors.white}
             flex={1.6}
+            disabled={retrying || retriesLeft <= 0}
           />
         </View>
       }
@@ -53,17 +77,15 @@ export function OrderActionErrorScreen({ navigation, route }: Props) {
           <Text style={styles.label}>Action</Text>
           <Text style={styles.value}>{actionLabel}</Text>
         </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Order</Text>
-          <Text style={styles.value}>ORD-2026-{order.id.replace('ORD-', '')}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Error</Text>
-          <Text style={styles.valueMono}>Server timeout (503)</Text>
-        </View>
+        {order ? (
+          <View style={styles.row}>
+            <Text style={styles.label}>Order</Text>
+            <Text style={styles.value}>{order.orderNumber}</Text>
+          </View>
+        ) : null}
         <View style={[styles.row, styles.rowLast]}>
-          <Text style={styles.label}>Time</Text>
-          <Text style={styles.value}>{order.timeLabel}</Text>
+          <Text style={styles.label}>Error</Text>
+          <Text style={styles.valueMono}>{lastError || 'Unknown error'}</Text>
         </View>
       </View>
 
@@ -117,6 +139,8 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   valueMono: {
+    flexShrink: 1,
+    textAlign: 'right',
     fontFamily: 'Courier',
     fontSize: 12,
     color: colors.textPrimary,

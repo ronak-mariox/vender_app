@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Button, FormSectionCard, Input, InfoBanner, NavHeader, ProgressSteps, ScreenContainer, SelectField } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useRegistration, type BankDetailsData } from '../../context/RegistrationContext';
-import { api, getApiErrorMessage, getFieldErrors } from '../../services/api';
+import { api } from '../../services/api';
+import { handleRegistrationSaveError } from './registrationHelpers';
 import { isRequired, isValidIFSC, type FormErrors } from '../../utils/validators';
 import { colors, fontFamilies, spacing, typography } from '../../theme';
 
@@ -13,7 +14,16 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'BankDetails'>;
 
 const ACCOUNT_TYPES = ['Current Account', 'Savings Account'];
 
-type Errors = FormErrors<'accountHolderName' | 'accountNumber' | 'confirmAccountNumber' | 'ifsc' | 'bankName' | 'branch'>;
+const FIELDS = [
+  'accountHolderName',
+  'accountNumber',
+  'confirmAccountNumber',
+  'ifsc',
+  'bankName',
+  'branch',
+  'accountType',
+] as const;
+type Errors = FormErrors<(typeof FIELDS)[number]>;
 
 export function BankDetailsScreen({ navigation }: Props) {
   const { data, updateBankDetails } = useRegistration();
@@ -25,12 +35,18 @@ export function BankDetailsScreen({ navigation }: Props) {
       bankName: '',
       branch: '',
       accountType: 'Current Account',
-      verified: false,
     },
   );
   const [confirmAccountNumber, setConfirmAccountNumber] = useState(form.accountNumber);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (data.bankDetails) {
+      setForm(data.bankDetails);
+      setConfirmAccountNumber(data.bankDetails.accountNumber);
+    }
+  }, [data.bankDetails]);
 
   function set<K extends keyof BankDetailsData>(key: K, value: BankDetailsData[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -45,6 +61,7 @@ export function BankDetailsScreen({ navigation }: Props) {
     const nextErrors: Errors = {};
     if (!isRequired(form.accountHolderName)) nextErrors.accountHolderName = 'Enter the account holder name';
     if (!isRequired(form.accountNumber)) nextErrors.accountNumber = 'Enter the account number';
+    else if (!/^\d{6,20}$/.test(form.accountNumber)) nextErrors.accountNumber = 'Account number must be 6–20 digits';
     if (!isRequired(confirmAccountNumber)) nextErrors.confirmAccountNumber = 'Re-enter the account number';
     else if (!numbersMatch) nextErrors.confirmAccountNumber = 'Account numbers do not match';
     if (!isValidIFSC(form.ifsc)) nextErrors.ifsc = 'Enter a valid IFSC code, e.g. HDFC0001234';
@@ -65,15 +82,10 @@ export function BankDetailsScreen({ navigation }: Props) {
         branch: form.branch,
         accountType: form.accountType,
       });
-      updateBankDetails({ ...form, verified: true });
+      updateBankDetails(form);
       navigation.navigate('KYCReview');
     } catch (err) {
-      const fieldErrors = getFieldErrors(err);
-      if (Object.keys(fieldErrors).length > 0) {
-        setErrors(fieldErrors as Errors);
-      } else {
-        setErrors({ form: getApiErrorMessage(err, 'Could not save your bank details. Please try again.') });
-      }
+      handleRegistrationSaveError<Errors>(err, setErrors, 'Could not save your bank details. Please try again.', FIELDS);
     } finally {
       setSaving(false);
     }
@@ -82,7 +94,7 @@ export function BankDetailsScreen({ navigation }: Props) {
   return (
     <ScreenContainer backgroundColor={colors.surface} scrollable>
       <NavHeader title="Business Registration" onBack={() => navigation.goBack()} />
-      <ProgressSteps currentStep={7} totalSteps={8} label="Bank Details" />
+      <ProgressSteps currentStep={8} totalSteps={8} label="Bank Details" />
       <View style={styles.content}>
         <View style={styles.headingBlock}>
           <Text style={styles.heading}>Bank Details</Text>
@@ -168,7 +180,7 @@ export function BankDetailsScreen({ navigation }: Props) {
             leftIcon="pin"
             value={form.branch}
             onChangeText={text => set('branch', text)}
-            placeholder="e.g. Dadar West, Mumbai"
+            placeholder="Branch name"
             error={errors.branch}
           />
 

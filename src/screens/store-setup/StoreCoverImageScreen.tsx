@@ -57,7 +57,9 @@ export function StoreCoverImageScreen({ navigation }: Props) {
           />
           <View style={styles.coverContent}>
             <Text style={styles.coverTitle}>{storeName}</Text>
-            <Text style={styles.coverSubtitle}>Fresh · Local · Delivered</Text>
+            {data.profile?.primaryCategory ? (
+              <Text style={styles.coverSubtitle}>{data.profile.primaryCategory}</Text>
+            ) : null}
           </View>
           <Pressable style={styles.coverEditButton} disabled={uploading} onPress={() => handlePick('gallery')}>
             {uploading ? (
@@ -88,12 +90,18 @@ export function StoreCoverImageScreen({ navigation }: Props) {
               />
             )}
             <View style={styles.previewAvatar}>
-              <Icon name="home" size={20} color={colors.white} />
+              {data.logoUrl ? (
+                <Image source={{ uri: resolveAssetUrl(data.logoUrl) }} style={styles.previewAvatarImage} />
+              ) : (
+                <Icon name="home" size={20} color={colors.white} />
+              )}
             </View>
           </View>
           <View style={styles.previewTextBlock}>
             <Text style={styles.previewName}>{storeName}</Text>
-            <Text style={styles.previewMeta}>Grocery & Essentials · 4.8 ★ · Dadar West</Text>
+            {data.profile?.primaryCategory ? (
+              <Text style={styles.previewMeta}>{data.profile.primaryCategory}</Text>
+            ) : null}
           </View>
         </View>
 
@@ -104,7 +112,6 @@ export function StoreCoverImageScreen({ navigation }: Props) {
               fileName="Cover image uploaded"
               thumbnailUri={coverImageUri}
               onReplace={() => handlePick('gallery')}
-              onDelete={() => setCoverImageUploaded(false, undefined)}
             />
           ) : (
             <Button
@@ -114,22 +121,6 @@ export function StoreCoverImageScreen({ navigation }: Props) {
               onPress={() => handlePick('gallery')}
             />
           )}
-          <View style={styles.actionsRow}>
-            <Pressable
-              style={[styles.actionButton, styles.actionButtonPrimary]}
-              onPress={() => Alert.alert('Reposition', 'Drag to reposition coming soon.')}
-            >
-              <Icon name="crosshair" size={16} color={colors.primary} />
-              <Text style={styles.actionLabelPrimary}>Reposition</Text>
-            </Pressable>
-            <Pressable
-              style={styles.actionButton}
-              onPress={() => setCoverImageUploaded(false, undefined)}
-            >
-              <Icon name="trash" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Remove</Text>
-            </Pressable>
-          </View>
         </View>
 
         <View style={styles.footer}>
@@ -244,6 +235,11 @@ const styles = StyleSheet.create({
     borderColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  previewAvatarImage: {
+    width: '100%',
+    height: '100%',
   },
   previewTextBlock: {
     paddingHorizontal: spacing.xl,
@@ -266,34 +262,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     padding: spacing.xl,
     gap: spacing.lg,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: spacing.lg,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  actionButtonPrimary: {
-    backgroundColor: colors.primarySurface,
-    borderColor: colors.primaryBorder,
-  },
-  actionLabel: {
-    ...typography.labelSemibold,
-    color: colors.textSecondary,
-  },
-  actionLabelPrimary: {
-    ...typography.labelSemibold,
-    color: colors.primary,
   },
   footer: {
     paddingTop: spacing.md,

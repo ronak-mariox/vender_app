@@ -1,13 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { Icon } from '../../icons/Icon';
 import { Badge } from '../../components';
 import { Offer, useOffers } from '../../context/OffersContext';
-import { offerTypeLabel } from './OfferCard';
-import { OfferActionsSheet } from './OfferActionsSheet';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { OffersListLayout, offersForTab, useOfferActions } from './OffersListLayout';
+import { formatOfferDateTime, offerDiscountLabel, offerEligibleProductCount, offerTypeLabel } from './offerFormat';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ScheduledOffers'>;
@@ -20,97 +20,58 @@ const BLUE_LABEL = '#2563EB';
 
 export function ScheduledOffersScreen({ navigation }: Props) {
   const { offers } = useOffers();
-  const [menuOffer, setMenuOffer] = useState<Offer | null>(null);
-
-  const counts = useMemo(() => {
-    const result = { active: 0, scheduled: 0, expired: 0 };
-    offers.forEach(offer => {
-      if (offer.status === 'active') result.active += 1;
-      else if (offer.status === 'scheduled') result.scheduled += 1;
-      else if (offer.status === 'expired') result.expired += 1;
-    });
-    return result;
-  }, [offers]);
-
-  const scheduledOffers = useMemo(() => offers.filter(offer => offer.status === 'scheduled'), [offers]);
-
-  const tabs = [
-    { key: 'all', label: `All (${offers.length})`, active: false, onPress: () => navigation.navigate('OffersOverview') },
-    { key: 'active', label: `Active (${counts.active})`, active: false, onPress: () => navigation.navigate('ActiveOffers') },
-    { key: 'scheduled', label: `Scheduled (${counts.scheduled})`, active: true, onPress: () => {} },
-    { key: 'expired', label: `Expired (${counts.expired})`, active: false, onPress: () => navigation.navigate('ExpiredOffers') },
-  ];
+  const { products } = useProductCatalog();
+  const { openMenu, sheet, editOffer, deleteOffer, isOfferPending } = useOfferActions();
+  const scheduledOffers = useMemo(() => offersForTab(offers, 'scheduled'), [offers]);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Offers & Promotions</Text>
-        <Pressable style={styles.createButton} onPress={() => navigation.navigate('CreateOffer', {})}>
-          <Icon name="plus" size={16} color={colors.white} />
-          <Text style={styles.createButtonText}>Create Offer</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.tabRow}>
-          {tabs.map(tab => (
-            <Pressable
-              key={tab.key}
-              style={[styles.tabPill, tab.active && styles.tabPillActive]}
-              onPress={tab.onPress}
-            >
-              <Text style={[styles.tabLabel, tab.active && styles.tabLabelActive]}>{tab.label}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <View style={styles.list}>
-          {scheduledOffers.length === 0 ? (
-            <Text style={styles.emptyText}>No scheduled offers right now.</Text>
-          ) : (
-            scheduledOffers.map(offer => (
-              <ScheduledOfferCard
-                key={offer.id}
-                offer={offer}
-                onMenuPress={() => setMenuOffer(offer)}
-                onCancel={() => navigation.navigate('DeleteOffer', { offerId: offer.id })}
-                onEdit={() => navigation.navigate('CreateOffer', { offerId: offer.id })}
-              />
-            ))
-          )}
-        </View>
-      </ScrollView>
-
-      <OfferActionsSheet
-        visible={!!menuOffer}
-        offer={menuOffer}
-        onClose={() => setMenuOffer(null)}
-        onEdit={() => menuOffer && navigation.navigate('CreateOffer', { offerId: menuOffer.id })}
-        onPauseResume={() => menuOffer && navigation.navigate('PauseOffer', { offerId: menuOffer.id })}
-        onDelete={() => {
-          if (menuOffer) {
-            navigation.navigate('DeleteOffer', { offerId: menuOffer.id });
-          }
-        }}
-      />
-    </SafeAreaView>
+    <OffersListLayout
+      activeTab="scheduled"
+      itemCount={scheduledOffers.length}
+      emptyText="No scheduled offers right now."
+      overlay={sheet}
+    >
+      {scheduledOffers.map(offer => (
+        <ScheduledOfferCard
+          key={offer.id}
+          offer={offer}
+          eligibleProducts={offerEligibleProductCount(offer, products)}
+          pending={isOfferPending(offer.id)}
+          onPress={() => navigation.navigate('OfferDetail', { offerId: offer.id })}
+          onMenuPress={() => openMenu(offer)}
+          onCancel={() => deleteOffer(offer)}
+          onEdit={() => editOffer(offer)}
+        />
+      ))}
+    </OffersListLayout>
   );
 }
 
 type ScheduledOfferCardProps = {
   offer: Offer;
+  eligibleProducts: number;
+  pending: boolean;
+  onPress: () => void;
   onMenuPress: () => void;
   onCancel: () => void;
   onEdit: () => void;
 };
 
-function ScheduledOfferCard({ offer, onMenuPress, onCancel, onEdit }: ScheduledOfferCardProps) {
+function ScheduledOfferCard({
+  offer,
+  eligibleProducts,
+  pending,
+  onPress,
+  onMenuPress,
+  onCancel,
+  onEdit,
+}: ScheduledOfferCardProps) {
   return (
-    <View style={styles.card}>
+    <Pressable style={styles.card} onPress={onPress}>
       <View style={styles.cardTopRow}>
         <View style={styles.cardTextColumn}>
           <Text style={styles.cardTitle} numberOfLines={1}>
-            {offer.name}
+            {offer.title}
           </Text>
           <View style={styles.badgeRow}>
             <View style={styles.typeBadge}>
@@ -126,105 +87,37 @@ function ScheduledOfferCard({ offer, onMenuPress, onCancel, onEdit }: ScheduledO
 
       <View style={styles.countdownBanner}>
         <Icon name="clock" size={16} color={BLUE_VALUE} />
-        <Text style={styles.countdownText}>Starts {offer.startDateLabel}</Text>
+        <Text style={styles.countdownText}>Starts {formatOfferDateTime(offer.startDate)}</Text>
       </View>
 
       <View style={styles.statGrid}>
         <View style={styles.statTile}>
-          <Text style={styles.statTileValue}>{(offer.estimatedReach ?? 0).toLocaleString('en-IN')}</Text>
-          <Text style={styles.statTileLabel}>Expected reach</Text>
+          <Text style={styles.statTileValue}>{offerDiscountLabel(offer)}</Text>
+          <Text style={styles.statTileLabel}>Discount</Text>
         </View>
         <View style={styles.statTile}>
-          <Text style={styles.statTileValue}>{offer.productCount.toLocaleString('en-IN')}</Text>
+          <Text style={styles.statTileValue}>
+            {offer.scope === 'entire-store' ? 'All' : eligibleProducts.toLocaleString('en-IN')}
+          </Text>
           <Text style={styles.statTileLabel}>Eligible products</Text>
         </View>
       </View>
 
       <View style={styles.footerRow}>
-        <Pressable style={styles.cancelButton} onPress={onCancel}>
+        <Pressable style={[styles.cancelButton, pending && styles.buttonDisabled]} onPress={onCancel} disabled={pending}>
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </Pressable>
-        <Pressable style={styles.editButton} onPress={onEdit}>
+        <Pressable style={[styles.editButton, pending && styles.buttonDisabled]} onPress={onEdit} disabled={pending}>
           <Text style={styles.editButtonText}>Edit</Text>
         </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.white,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.xxl,
-    paddingVertical: spacing.lg,
-  },
-  headerTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 18,
-    lineHeight: 27,
-    color: colors.textPrimary,
-  },
-  createButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: spacing.md,
-    borderRadius: radii.md,
-  },
-  createButtonText: {
-    ...typography.labelSemibold,
-    color: colors.white,
-  },
-  content: {
-    paddingHorizontal: spacing.xxl,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xxxl,
-  },
-  tabRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  tabPill: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  tabPillActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  tabLabel: {
-    ...typography.label,
-    color: colors.textSecondary,
-  },
-  tabLabelActive: {
-    ...typography.labelSemibold,
-    color: colors.white,
-  },
-  list: {
-    marginTop: spacing.xl,
-    gap: spacing.lg,
-  },
-  emptyText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingVertical: spacing.huge,
+  buttonDisabled: {
+    opacity: 0.6,
   },
   card: {
     backgroundColor: colors.white,

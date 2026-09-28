@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { useProfile } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus } from '../../context/ProfileContext';
 import { Badge, Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { colors, radii, spacing, typography } from '../../theme';
@@ -41,6 +41,7 @@ function InfoRow({
 
 export function ProfileVendorInfoScreen({ navigation }: Props) {
   const { profile } = useProfile();
+  useProfileRefreshOnFocus();
   const { vendor } = profile;
 
   const handleCopyGst = () => {
@@ -78,19 +79,24 @@ export function ProfileVendorInfoScreen({ navigation }: Props) {
           <InfoRow label="Registration Date" value={profile.store.onboardedLabel} />
           <InfoRow
             label="Status"
-            valueNode={<Badge label={profile.status} tone="success" />}
+            valueNode={
+              <Badge
+                label={profile.status ? profile.status.charAt(0).toUpperCase() + profile.status.slice(1) : '—'}
+                tone={profile.status === 'active' ? 'success' : profile.status === 'pending' ? 'warning' : 'error'}
+              />
+            }
             last
           />
         </View>
 
         <View style={styles.buttonWrapper}>
-          <Button label="Edit Business Details" onPress={() => navigation.navigate('ProfileEditVendorInfo')} />
+          <Button label="Edit Business Address" onPress={() => navigation.navigate('ProfileEditVendorInfo')} />
         </View>
 
         <View style={styles.bannerWrapper}>
           <View style={styles.banner}>
             <Icon name="info" size={14} color={colors.warningDark} />
-            <Text style={styles.bannerText}>Some details require re-verification if changed.</Text>
+            <Text style={styles.bannerText}>Business name, type, GSTIN and PAN are verified KYC details. Contact support to change them.</Text>
           </View>
         </View>
       </ScrollView>

@@ -15,7 +15,22 @@ const MONTH_NAMES_LONG = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-export const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function isSameDay(a: Date | null | undefined, b: Date | null | undefined): boolean {
+  return Boolean(
+    a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(),
+  );
+}
+
+export function parseIso(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
 function getMonthMatrix(year: number, month: number): (number | null)[][] {
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -40,38 +55,40 @@ function formatTime(totalMinutes: number): string {
 }
 
 type CalendarViewProps = {
-  year: number;
-  month: number;
-  selectedDay: number | null;
-  markedDay?: number | null;
-  onSelectDay: (day: number) => void;
-  onPrevMonth: () => void;
-  onNextMonth: () => void;
+  selected: Date | null;
+  marked?: Date | null;
+  /** Days before this date can't be picked. */
+  minDate?: Date | null;
+  onSelect: (date: Date) => void;
 };
 
-export function CalendarView({
-  year,
-  month,
-  selectedDay,
-  markedDay,
-  onSelectDay,
-  onPrevMonth,
-  onNextMonth,
-}: CalendarViewProps) {
+/** Month-grid date picker built from RN primitives; keeps its own visible month. */
+export function CalendarView({ selected, marked, minDate, onSelect }: CalendarViewProps) {
+  const initial = selected ?? minDate ?? new Date();
+  const [year, setYear] = useState(initial.getFullYear());
+  const [month, setMonth] = useState(initial.getMonth());
   const weeks = useMemo(() => getMonthMatrix(year, month), [year, month]);
+  const minDay = minDate ? startOfDay(minDate).getTime() : null;
+  const canGoBack = minDate ? year > minDate.getFullYear() || (year === minDate.getFullYear() && month > minDate.getMonth()) : true;
+
+  function shiftMonth(delta: number) {
+    const next = new Date(year, month + delta, 1);
+    setYear(next.getFullYear());
+    setMonth(next.getMonth());
+  }
 
   return (
     <View style={styles.calendarCard}>
       <View style={styles.calendarHeaderRow}>
-        <Pressable hitSlop={8} onPress={onPrevMonth}>
-          <View style={styles.chevronLeftWrap}>
+        <Pressable hitSlop={8} onPress={() => canGoBack && shiftMonth(-1)} disabled={!canGoBack}>
+          <View style={[styles.chevronLeftWrap, !canGoBack && styles.navDisabled]}>
             <Icon name="chevron-right" size={16} color={colors.textSecondary} />
           </View>
         </Pressable>
         <Text style={styles.calendarMonthLabel}>
           {MONTH_NAMES_LONG[month]} {year}
         </Text>
-        <Pressable hitSlop={8} onPress={onNextMonth}>
+        <Pressable hitSlop={8} onPress={() => shiftMonth(1)}>
           <Icon name="chevron-right" size={16} color={colors.textSecondary} />
         </Pressable>
       </View>
@@ -91,19 +108,23 @@ export function CalendarView({
               if (day == null) {
                 return <View key={dayIndex} style={styles.dayCell} />;
               }
-              const isSelected = day === selectedDay;
-              const isMarked = !isSelected && day === markedDay;
+              const date = new Date(year, month, day);
+              const disabled = minDay != null && date.getTime() < minDay;
+              const isSelected = isSameDay(date, selected);
+              const isMarked = !isSelected && isSameDay(date, marked);
               return (
                 <Pressable
                   key={dayIndex}
+                  disabled={disabled}
                   style={[styles.dayCell, isMarked && styles.dayCellMarked, isSelected && styles.dayCellSelected]}
-                  onPress={() => onSelectDay(day)}
+                  onPress={() => onSelect(date)}
                 >
                   <Text
                     style={[
                       styles.dayText,
                       isMarked && styles.dayTextMarked,
                       isSelected && styles.dayTextSelected,
+                      disabled && styles.dayTextDisabled,
                     ]}
                   >
                     {day}
@@ -118,41 +139,44 @@ export function CalendarView({
   );
 }
 
+function nextHalfHour(now: Date): number {
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  return Math.min(1410, Math.ceil((minutes + 1) / 30) * 30);
+}
+
 export function OfferStartDateScreen({ navigation }: Props) {
-  const { updateStartDate } = useOfferDraft();
-  const [year, setYear] = useState(2024);
-  const [month, setMonth] = useState(10);
-  const [selectedDay, setSelectedDay] = useState(9);
-  const [minutes, setMinutes] = useState(0);
-  const [immediate, setImmediate] = useState(false);
+  const { draft, updateStartDate } = useOfferDraft();
+  const today = useMemo(() => startOfDay(new Date()), []);
+  const existingStart = parseIso(draft.startDate);
+  const [selectedDay, setSelectedDay] = useState<Date>(existingStart ? startOfDay(existingStart) : today);
+  const [minutes, setMinutes] = useState(
+    existingStart ? existingStart.getHours() * 60 + existingStart.getMinutes() : nextHalfHour(new Date()),
+  );
+  const [immediate, setImmediate] = useState(draft.startImmediately);
+  const [error, setError] = useState<string | undefined>();
 
-  function handlePrevMonth() {
-    setMonth(prev => {
-      if (prev === 0) {
-        setYear(y => y - 1);
-        return 11;
-      }
-      return prev - 1;
-    });
-  }
-
-  function handleNextMonth() {
-    setMonth(prev => {
-      if (prev === 11) {
-        setYear(y => y + 1);
-        return 0;
-      }
-      return prev + 1;
-    });
-  }
+  const minDate = existingStart && existingStart < today ? startOfDay(existingStart) : today;
 
   function handleNext() {
-    updateStartDate({
-      dateLabel: `${selectedDay} ${MONTH_NAMES_SHORT[month]}`,
-      time: formatTime(minutes),
-      immediate,
-    });
+    if (immediate) {
+      updateStartDate({ startDate: null, startImmediately: true });
+      navigation.navigate('OfferEndDate');
+      return;
+    }
+    const start = new Date(selectedDay);
+    start.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+    const unchanged = existingStart && start.getTime() === existingStart.getTime();
+    if (!unchanged && start.getTime() < Date.now()) {
+      setError('That time has already passed. Pick a later time or turn on "Start immediately".');
+      return;
+    }
+    updateStartDate({ startDate: start.toISOString(), startImmediately: false });
     navigation.navigate('OfferEndDate');
+  }
+
+  function changeMinutes(delta: number) {
+    setMinutes(m => (((m + delta) % 1440) + 1440) % 1440);
+    setError(undefined);
   }
 
   return (
@@ -164,13 +188,13 @@ export function OfferStartDateScreen({ navigation }: Props) {
           pointerEvents={immediate ? 'none' : 'auto'}
         >
           <CalendarView
-            year={year}
-            month={month}
-            selectedDay={selectedDay}
-            markedDay={7}
-            onSelectDay={setSelectedDay}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
+            selected={selectedDay}
+            marked={today}
+            minDate={minDate}
+            onSelect={date => {
+              setSelectedDay(date);
+              setError(undefined);
+            }}
           />
 
           <View style={styles.timeSection}>
@@ -178,12 +202,12 @@ export function OfferStartDateScreen({ navigation }: Props) {
             <View style={styles.timeField}>
               <Text style={styles.timeValue}>{formatTime(minutes)}</Text>
               <View style={styles.timeChevrons}>
-                <Pressable hitSlop={4} onPress={() => setMinutes(m => (m + 30) % 1440)}>
+                <Pressable hitSlop={4} onPress={() => changeMinutes(30)}>
                   <View style={styles.chevronUpWrap}>
                     <Icon name="chevron-down" size={14} color={colors.textSecondary} />
                   </View>
                 </Pressable>
-                <Pressable hitSlop={4} onPress={() => setMinutes(m => ((m - 30) % 1440 + 1440) % 1440)}>
+                <Pressable hitSlop={4} onPress={() => changeMinutes(-30)}>
                   <Icon name="chevron-down" size={14} color={colors.textSecondary} />
                 </Pressable>
               </View>
@@ -196,8 +220,15 @@ export function OfferStartDateScreen({ navigation }: Props) {
             <Text style={styles.toggleTitle}>Start immediately</Text>
             <Text style={styles.toggleSubtitle}>Offer goes live right now</Text>
           </View>
-          <Switch value={immediate} onChange={setImmediate} />
+          <Switch
+            value={immediate}
+            onChange={value => {
+              setImmediate(value);
+              setError(undefined);
+            }}
+          />
         </View>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </ScrollView>
 
       <View style={styles.footer}>
@@ -283,6 +314,17 @@ const styles = StyleSheet.create({
     ...typography.labelSemibold,
     fontSize: 13,
     color: colors.primary,
+  },
+  dayTextDisabled: {
+    color: colors.textTertiary,
+  },
+  navDisabled: {
+    opacity: 0.3,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    marginTop: spacing.md,
   },
   dayTextSelected: {
     ...typography.captionBold,

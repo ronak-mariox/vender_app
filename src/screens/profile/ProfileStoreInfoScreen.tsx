@@ -1,20 +1,31 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { useProfile } from '../../context/ProfileContext';
+import { useProfile, useProfileRefreshOnFocus } from '../../context/ProfileContext';
 import { Button, NavHeader, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { resolveAssetUrl } from '../../utils/resolveAssetUrl';
+import { getApiErrorMessage } from '../../services/api';
 import { colors, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProfileStoreInfo'>;
 
-function InfoRow({ label, value, last }: { label: string; value: string; last?: boolean }) {
+function InfoRow({
+  label,
+  value,
+  last,
+  multiline,
+}: {
+  label: string;
+  value: string;
+  last?: boolean;
+  multiline?: boolean;
+}) {
   return (
-    <View style={[styles.infoRow, !last && styles.infoRowDivider]}>
+    <View style={[styles.infoRow, multiline && styles.infoRowMultiline, !last && styles.infoRowDivider]}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue} numberOfLines={1} ellipsizeMode="tail">
+      <Text style={styles.infoValue} numberOfLines={multiline ? undefined : 1} ellipsizeMode="tail">
         {value || '—'}
       </Text>
     </View>
@@ -23,6 +34,7 @@ function InfoRow({ label, value, last }: { label: string; value: string; last?: 
 
 export function ProfileStoreInfoScreen({ navigation }: Props) {
   const { profile, updateStoreLogo, updateStoreCover } = useProfile();
+  useProfileRefreshOnFocus();
   const { store } = profile;
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
@@ -32,6 +44,8 @@ export function ProfileStoreInfoScreen({ navigation }: Props) {
     setIsUploadingCover(true);
     try {
       await updateStoreCover('gallery');
+    } catch (err) {
+      Alert.alert('Could not update cover photo', getApiErrorMessage(err, 'Please try again.'));
     } finally {
       setIsUploadingCover(false);
     }
@@ -42,6 +56,8 @@ export function ProfileStoreInfoScreen({ navigation }: Props) {
     setIsUploadingLogo(true);
     try {
       await updateStoreLogo('gallery');
+    } catch (err) {
+      Alert.alert('Could not update logo', getApiErrorMessage(err, 'Please try again.'));
     } finally {
       setIsUploadingLogo(false);
     }
@@ -90,7 +106,7 @@ export function ProfileStoreInfoScreen({ navigation }: Props) {
           <InfoRow label="Contact Number" value={store.contactNumber} />
           <InfoRow label="Min. Order Value" value={store.minimumOrderValue != null ? `₹${store.minimumOrderValue}` : ''} />
           <InfoRow label="Avg. Prep Time" value={store.avgPrepTime != null ? `${store.avgPrepTime} min` : ''} />
-          <InfoRow label="Description" value={store.description} last />
+          <InfoRow label="Description" value={store.description} last multiline />
         </View>
 
         <View style={styles.buttonWrapper}>
@@ -178,6 +194,9 @@ const styles = StyleSheet.create({
     minHeight: 52,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
+  },
+  infoRowMultiline: {
+    alignItems: 'flex-start',
   },
   infoRowDivider: {
     borderBottomWidth: 1,

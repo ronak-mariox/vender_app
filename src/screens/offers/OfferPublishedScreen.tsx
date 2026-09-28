@@ -6,6 +6,9 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Button } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useOffers } from '../../context/OffersContext';
+import { useOfferDraft } from '../../context/OfferDraftContext';
+import { useProductCatalog } from '../../context/ProductCatalogContext';
+import { formatOfferDateTime, offerDiscountLabel, offerDurationLabel, offerScopeLabel } from './offerFormat';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OfferPublished'>;
@@ -24,24 +27,31 @@ const DOTS = [
 export function OfferPublishedScreen({ navigation, route }: Props) {
   const { offerId } = route.params;
   const { getOffer } = useOffers();
+  const { resetDraft } = useOfferDraft();
   const offer = getOffer(offerId);
 
-  const discountLabel = offer
-    ? `${offer.discountType === 'percentage' ? `${offer.discountValue}%` : `₹${offer.discountValue}`} on ${
-        offer.scope === 'entire-store' ? 'Entire Store' : offer.categoryLabel
-      }`
-    : '—';
-  const durationLabel = offer ? offer.durationLabel.split(' · ')[0] : '—';
+  const { products, categories } = useProductCatalog();
+
+  const discountLabel = offer ? `${offerDiscountLabel(offer)} on ${offerScopeLabel(offer, products, categories)}` : '—';
+  const durationLabel = offer ? offerDurationLabel(offer.startDate, offer.endDate) : '—';
+  const wasUpdated = Boolean(offer && offer.createdAt && offer.updatedAt && offer.createdAt !== offer.updatedAt);
+  const heading = wasUpdated ? 'Offer Updated!' : offer?.status === 'scheduled' ? 'Offer Scheduled!' : 'Offer Live!';
+  const subtitle =
+    offer?.status === 'scheduled'
+      ? `${offer.title} will go live on\n${formatOfferDateTime(offer.startDate)}.`
+      : offer?.status === 'active'
+        ? `${offer.title} is now active\nand visible to customers.`
+        : `${offer?.title || 'Your offer'} has been saved.`;
 
   function handleViewOffer() {
-    navigation.reset({
-      index: 1,
-      routes: [{ name: 'OffersOverview' }, { name: 'OfferDetail', params: { offerId } }],
-    });
+    navigation.popTo('OffersOverview');
+    navigation.navigate('OfferDetail', { offerId });
   }
 
   function handleCreateAnother() {
-    navigation.reset({ index: 0, routes: [{ name: 'CreateOffer', params: {} }] });
+    resetDraft();
+    navigation.popTo('OffersOverview');
+    navigation.navigate('CreateOffer', {});
   }
 
   return (
@@ -67,18 +77,13 @@ export function OfferPublishedScreen({ navigation, route }: Props) {
           <View style={styles.checkCircle}>
             <Icon name="check" size={44} color={colors.white} strokeWidth={3} />
           </View>
-          <Text style={styles.heading}>Offer Live!</Text>
-          <Text style={styles.subtitle}>
-            {offer?.name || 'Your offer'} is now active{'\n'}and visible to customers.
-          </Text>
+          <Text style={styles.heading}>{heading}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
 
           <View style={styles.summaryCard}>
-            <SummaryRow label="Offer" value={offer?.name || '—'} first />
+            <SummaryRow label="Offer" value={offer?.title || '—'} first />
             <SummaryRow label="Discount" value={discountLabel} />
             <SummaryRow label="Duration" value={durationLabel} />
-            {offer?.estimatedReach !== undefined ? (
-              <SummaryRow label="Est. Reach" value={`${offer.estimatedReach} customers`} />
-            ) : null}
           </View>
 
           <View style={styles.footer}>

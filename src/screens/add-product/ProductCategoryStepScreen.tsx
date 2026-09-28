@@ -6,14 +6,14 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { AddProductHeader, Button, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useProductCatalog } from '../../context/ProductCatalogContext';
-import { useProductDraft } from '../../context/ProductDraftContext';
+import { ADD_PRODUCT_TOTAL_STEPS, useProductDraft } from '../../context/ProductDraftContext';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ProductCategoryStep'>;
 
 export function ProductCategoryStepScreen({ navigation }: Props) {
-  const { draft } = useProductDraft();
-  const { categories, loading, refreshProducts } = useProductCatalog();
+  const { draft, updateCategory } = useProductDraft();
+  const { categories, loading, error, refreshProducts } = useProductCatalog();
   const [selectedId, setSelectedId] = useState(draft.category?.categoryId ?? '');
 
   // Categories are otherwise only loaded once when the app starts, so a category an
@@ -22,14 +22,20 @@ export function ProductCategoryStepScreen({ navigation }: Props) {
   // list matters most.
   useFocusEffect(
     useCallback(() => {
-      refreshProducts();
+      refreshProducts().catch(() => undefined);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []),
   );
 
   function handleContinue() {
-    if (!selectedId) return;
-    navigation.navigate('ProductSubcategoryStep', { categoryId: selectedId });
+    const category = categories.find(item => item.id === selectedId);
+    if (!category) return;
+    if (category.subcategories.length === 0) {
+      updateCategory({ categoryId: category.id, categoryName: category.name, subcategoryId: '', subcategoryName: '' });
+      navigation.navigate('ProductDescriptionStep');
+      return;
+    }
+    navigation.navigate('ProductSubcategoryStep', { categoryId: category.id });
   }
 
   const selectedCategory = categories.find(category => category.id === draft.category?.categoryId);
@@ -40,7 +46,7 @@ export function ProductCategoryStepScreen({ navigation }: Props) {
         title="Category"
         currentStep={3}
         onBack={() => navigation.goBack()}
-        onSaveDraft={() => navigation.navigate('ProductCatalog')}
+        totalSteps={ADD_PRODUCT_TOTAL_STEPS}
       />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.intro}>
@@ -51,15 +57,23 @@ export function ProductCategoryStepScreen({ navigation }: Props) {
           <View style={styles.breadcrumbChip}>
             <Text style={styles.breadcrumbText}>
               {draft.category.categoryName}
-              <Text style={styles.breadcrumbSeparator}>  ›  </Text>
-              {draft.category.subcategoryName}
+              {draft.category.subcategoryName ? (
+                <>
+                  <Text style={styles.breadcrumbSeparator}>  ›  </Text>
+                  {draft.category.subcategoryName}
+                </>
+              ) : null}
             </Text>
-            <Text style={styles.changeText}>Change</Text>
+            <Text style={styles.changeText}>Current selection</Text>
           </View>
         ) : null}
 
-        {loading ? (
+        {loading && categories.length === 0 ? (
           <ActivityIndicator size="large" color={colors.primary} style={styles.loading} />
+        ) : categories.length === 0 ? (
+          <Text style={styles.intro}>
+            {error ? `Couldn't load categories: ${error}` : 'No categories are available yet. Please try again later.'}
+          </Text>
         ) : (
           <View style={styles.card}>
             {categories.map((category, index) => {

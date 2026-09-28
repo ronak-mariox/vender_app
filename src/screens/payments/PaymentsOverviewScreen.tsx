@@ -1,72 +1,73 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import { usePayments } from '../../context/PaymentsContext';
-import { PeriodFilterBar, PaymentsPeriod } from './PeriodFilterBar';
+import { PeriodFilterBar } from './PeriodFilterBar';
 import { SettlementRow } from './SettlementRow';
 import { SummaryStatCard } from './SummaryStatCard';
+import { formatINR, sumBy } from './settlementHelpers';
 import { colors, fontFamilies, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'PaymentsOverview'>;
 
 const PENDING_COLOR = '#B45309';
 
-function formatINR(amount: number) {
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
-}
-
-function currentMonthLabel(): string {
-  return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-}
-
 export function PaymentsOverviewScreen({ navigation }: Props) {
-  const { settlements } = usePayments();
-  const [period, setPeriod] = useState<PaymentsPeriod>('month');
+  const { settlements, filteredSettlements, periodLabel, isLoading, error, refresh } = usePayments();
 
-  const totalSales = useMemo(() => settlements.reduce((sum, s) => sum + s.grossSales, 0), [settlements]);
-  const netPayoutTotal = useMemo(() => settlements.reduce((sum, s) => sum + s.netPayout, 0), [settlements]);
-
-  const paidSettlements = useMemo(() => settlements.filter(s => s.status === 'paid'), [settlements]);
-  const paidTotal = useMemo(() => paidSettlements.reduce((sum, s) => sum + s.netPayout, 0), [paidSettlements]);
-
-  const pendingSettlements = useMemo(() => settlements.filter(s => s.status !== 'paid'), [settlements]);
-  const pendingTotal = useMemo(() => pendingSettlements.reduce((sum, s) => sum + s.netPayout, 0), [pendingSettlements]);
-  const earliestDue = useMemo(
-    () => pendingSettlements.find(s => s.dueDateLabel) ?? pendingSettlements[0],
-    [pendingSettlements],
+  const totalSales = useMemo(() => sumBy(filteredSettlements, s => s.grossSales), [filteredSettlements]);
+  const netPayoutTotal = useMemo(() => sumBy(filteredSettlements, s => s.netPayout), [filteredSettlements]);
+  const paidTotal = useMemo(
+    () => sumBy(filteredSettlements.filter(s => s.status === 'paid'), s => s.netPayout),
+    [filteredSettlements],
   );
+  const unpaid = useMemo(() => filteredSettlements.filter(s => s.status !== 'paid'), [filteredSettlements]);
+  const pendingTotal = useMemo(() => sumBy(unpaid, s => s.netPayout), [unpaid]);
+  const failedCount = unpaid.filter(s => s.status === 'failed').length;
+  const feesTotal = useMemo(
+    () => sumBy(filteredSettlements, s => s.commission + s.gstOnCommission),
+    [filteredSettlements],
+  );
+  const otherDeductions = Math.max(0, totalSales - feesTotal - netPayoutTotal);
 
   const recentTransactions = useMemo(() => settlements.slice(0, 3), [settlements]);
-  const latestSettlementId = settlements[0]?.id ?? '';
-
-  const commissionTotal = useMemo(
-    () => settlements.reduce((sum, s) => sum + s.commission + s.gstOnCommission, 0),
-    [settlements],
-  );
-  const adjustmentsTotal = useMemo(() => settlements.reduce((sum, s) => sum + s.adjustments, 0), [settlements]);
 
   const netRatio = totalSales > 0 ? netPayoutTotal / totalSales : 1;
-  const commissionRatio = totalSales > 0 ? commissionTotal / totalSales : 0;
-  const adjustmentRatio = totalSales > 0 ? adjustmentsTotal / totalSales : 0;
+  const feesRatio = totalSales > 0 ? feesTotal / totalSales : 0;
+  const otherRatio = totalSales > 0 ? otherDeductions / totalSales : 0;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.headerBlock}>
         <Text style={styles.title}>Payments & Settlements</Text>
-        <Text style={styles.subtitle}>{currentMonthLabel()}</Text>
+        <Text style={styles.subtitle}>{periodLabel}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <PeriodFilterBar value={period} onChange={setPeriod} />
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={isLoading && settlements.length > 0} onRefresh={refresh} />}
+      >
+        <PeriodFilterBar />
+
+        {error ? (
+          <Pressable style={styles.errorBox} onPress={refresh}>
+            <Text style={styles.errorText}>{error} Tap to retry.</Text>
+          </Pressable>
+        ) : null}
+
+        {isLoading && settlements.length === 0 ? (
+          <ActivityIndicator style={styles.loader} color={colors.primary} />
+        ) : null}
 
         <View style={styles.grid}>
           <Pressable style={styles.gridItem} onPress={() => navigation.navigate('TotalSales')}>
             <SummaryStatCard
               label="Total Sales"
               value={formatINR(totalSales)}
-              sublabel={`${settlements.length} settlement${settlements.length === 1 ? '' : 's'}`}
+              sublabel={`${filteredSettlements.length} settlement${filteredSettlements.length === 1 ? '' : 's'}`}
               sublabelColor={colors.primary}
             />
           </Pressable>
@@ -74,7 +75,9 @@ export function PaymentsOverviewScreen({ navigation }: Props) {
             <SummaryStatCard
               label="Pending"
               value={formatINR(pendingTotal)}
-              sublabel={earliestDue?.dueDateLabel ?? 'No dues'}
+              sublabel={
+                unpaid.length === 0 ? 'No dues' : failedCount > 0 ? `${failedCount} failed` : `${unpaid.length} awaiting payout`
+              }
               valueColor={PENDING_COLOR}
               sublabelColor={PENDING_COLOR}
             />
@@ -83,41 +86,43 @@ export function PaymentsOverviewScreen({ navigation }: Props) {
             <SummaryStatCard
               label="Paid"
               value={formatINR(paidTotal)}
-              sublabel="This month"
+              sublabel={periodLabel}
               valueColor={colors.primary}
               sublabelColor={colors.primary}
             />
           </Pressable>
-          <Pressable
-            style={styles.gridItem}
-            onPress={() => navigation.navigate('NetSettlement', { settlementId: latestSettlementId })}
-          >
+          <Pressable style={styles.gridItem} onPress={() => navigation.navigate('NetSettlement')}>
             <SummaryStatCard label="Net Payout" value={formatINR(netPayoutTotal)} sublabel="After deductions" />
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>This Month&apos;s Breakdown</Text>
+        <Text style={styles.sectionTitle}>Breakdown · {periodLabel}</Text>
         <View style={styles.breakdownCard}>
           <View style={styles.barTrack}>
             <View style={[styles.barSegment, { flex: Math.max(netRatio, 0.001), backgroundColor: colors.primary }]} />
-            {commissionRatio > 0 ? (
-              <View style={[styles.barSegment, { flex: commissionRatio, backgroundColor: '#FB923C' }]} />
+            {feesRatio > 0 ? (
+              <View style={[styles.barSegment, { flex: feesRatio, backgroundColor: '#FB923C' }]} />
             ) : null}
-            {adjustmentRatio > 0 ? (
-              <View style={[styles.barSegment, { flex: adjustmentRatio, backgroundColor: '#A78BFA' }]} />
+            {otherRatio > 0 ? (
+              <View style={[styles.barSegment, { flex: otherRatio, backgroundColor: '#A78BFA' }]} />
             ) : null}
           </View>
           <Text style={styles.breakdownSales}>Sales {formatINR(totalSales)}</Text>
           <View style={styles.legendRow}>
             <View style={[styles.legendDot, { backgroundColor: '#FB923C' }]} />
-            <View style={[styles.legendDot, { backgroundColor: '#A78BFA' }]} />
-            <Text style={styles.legendText}>Commission · GST · Adjustments</Text>
+            <Text style={styles.legendText}>Commission + GST {formatINR(feesTotal)}</Text>
           </View>
+          {otherDeductions > 0 ? (
+            <View style={styles.legendRow}>
+              <View style={[styles.legendDot, { backgroundColor: '#A78BFA' }]} />
+              <Text style={styles.legendText}>Returns & adjustments {formatINR(otherDeductions)}</Text>
+            </View>
+          ) : null}
           <Text style={styles.breakdownNet}>Net {formatINR(netPayoutTotal)}</Text>
         </View>
 
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          <Text style={styles.sectionTitle}>Recent Settlements</Text>
           <Pressable onPress={() => navigation.navigate('SettlementHistory')} hitSlop={8}>
             <Text style={styles.viewAll}>View All</Text>
           </Pressable>
@@ -130,6 +135,9 @@ export function PaymentsOverviewScreen({ navigation }: Props) {
               onPress={() => navigation.navigate('SettlementDetails', { settlementId: settlement.id })}
             />
           ))}
+          {!isLoading && recentTransactions.length === 0 ? (
+            <Text style={styles.emptyText}>No settlements yet. They appear once delivered orders are settled.</Text>
+          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -236,6 +244,25 @@ const styles = StyleSheet.create({
   viewAll: {
     ...typography.labelSemibold,
     color: colors.primary,
+  },
+  errorBox: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.sm,
+    backgroundColor: colors.errorSurface,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+  },
+  loader: {
+    marginTop: spacing.lg,
+  },
+  emptyText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    padding: spacing.xl,
   },
   listCard: {
     borderWidth: 1,

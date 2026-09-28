@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import {
@@ -17,8 +17,13 @@ import { colors, fontFamilies, spacing, typography } from '../../theme';
 type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 type LoginMethod = 'mobile' | 'email';
 
-export function LoginScreen({ navigation }: Props) {
+export function LoginScreen({ navigation, route }: Props) {
   const { login } = useVendorAuth();
+  const forcedLogoutMessage = route.params?.message;
+
+  useEffect(() => {
+    if (forcedLogoutMessage) Alert.alert('Signed out', forcedLogoutMessage);
+  }, [forcedLogoutMessage]);
   const [method, setMethod] = useState<LoginMethod>('mobile');
   const [mobileNumber, setMobileNumber] = useState('');
   const [email, setEmail] = useState('');

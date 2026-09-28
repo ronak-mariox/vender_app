@@ -1,61 +1,38 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
-import { Button, ScreenContainer, Switch } from '../../components';
+import { Button, ScreenContainer } from '../../components';
 import { Icon } from '../../icons/Icon';
 import { useOfferDraft } from '../../context/OfferDraftContext';
 import { colors, radii, spacing, typography } from '../../theme';
 import { OfferWizardHeader } from './OfferWizardHeader';
-import { CalendarView, MONTH_NAMES_SHORT } from './OfferStartDateScreen';
+import { CalendarView, parseIso, startOfDay } from './OfferStartDateScreen';
+import { offerDurationLabel } from './offerFormat';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OfferEndDate'>;
 
-function extractDayNumber(dateLabel: string | undefined): number | null {
-  if (!dateLabel) return null;
-  const parsed = parseInt(dateLabel, 10);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
 export function OfferEndDateScreen({ navigation }: Props) {
   const { draft, updateEndDate } = useOfferDraft();
-  const [year, setYear] = useState(2024);
-  const [month, setMonth] = useState(10);
-  const [selectedDay, setSelectedDay] = useState(15);
-  const [noEndDate, setNoEndDate] = useState(false);
+  const startDate = useMemo(
+    () => (draft.startImmediately ? new Date() : parseIso(draft.startDate) ?? new Date()),
+    [draft.startImmediately, draft.startDate],
+  );
+  const existingEnd = parseIso(draft.endDate);
+  const [selectedDay, setSelectedDay] = useState<Date | null>(
+    existingEnd && existingEnd >= startDate ? startOfDay(existingEnd) : null,
+  );
 
-  const startDay = extractDayNumber(draft.startDate?.dateLabel);
-  const dayCount = startDay != null ? Math.max(1, selectedDay - startDay + 1) : null;
-  const bannerText =
-    startDay != null && draft.startDate
-      ? `Offer runs for ${dayCount} day${dayCount === 1 ? '' : 's'} (${draft.startDate.dateLabel}–${selectedDay} ${MONTH_NAMES_SHORT[month]})`
-      : `Offer ends ${selectedDay} ${MONTH_NAMES_SHORT[month]}`;
-
-  function handlePrevMonth() {
-    setMonth(prev => {
-      if (prev === 0) {
-        setYear(y => y - 1);
-        return 11;
-      }
-      return prev - 1;
-    });
-  }
-
-  function handleNextMonth() {
-    setMonth(prev => {
-      if (prev === 11) {
-        setYear(y => y + 1);
-        return 0;
-      }
-      return prev + 1;
-    });
-  }
+  const endDate = selectedDay
+    ? new Date(selectedDay.getFullYear(), selectedDay.getMonth(), selectedDay.getDate(), 23, 59, 59, 999)
+    : null;
+  const bannerText = endDate
+    ? `Offer runs ${offerDurationLabel(startDate.toISOString(), endDate.toISOString())}`
+    : 'Pick the last day this offer should run';
 
   function handleNext() {
-    updateEndDate({
-      dateLabel: noEndDate ? 'No end date' : `${selectedDay} ${MONTH_NAMES_SHORT[month]}`,
-      immediate: noEndDate,
-    });
+    if (!endDate) return;
+    updateEndDate(endDate.toISOString());
     navigation.navigate('OfferReview');
   }
 
@@ -63,37 +40,24 @@ export function OfferEndDateScreen({ navigation }: Props) {
     <ScreenContainer scrollable={false} backgroundColor={colors.white}>
       <OfferWizardHeader title="End Date" step={4} onBack={() => navigation.goBack()} />
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View
-          style={[styles.disableableGroup, noEndDate && styles.disabledGroup]}
-          pointerEvents={noEndDate ? 'none' : 'auto'}
-        >
+        <View style={styles.disableableGroup}>
           <CalendarView
-            year={year}
-            month={month}
-            selectedDay={selectedDay}
-            markedDay={7}
-            onSelectDay={setSelectedDay}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
+            selected={selectedDay}
+            marked={startOfDay(startDate)}
+            minDate={startDate}
+            onSelect={setSelectedDay}
           />
 
           <View style={styles.banner}>
             <Icon name="calendar" size={16} color={colors.primary} />
             <Text style={styles.bannerText}>{bannerText}</Text>
           </View>
-        </View>
-
-        <View style={styles.toggleRow}>
-          <View style={styles.toggleTextColumn}>
-            <Text style={styles.toggleTitle}>No end date</Text>
-            <Text style={styles.toggleSubtitle}>Offer runs until manually stopped</Text>
-          </View>
-          <Switch value={noEndDate} onChange={setNoEndDate} />
+          <Text style={styles.hintText}>The offer ends at 11:59 PM on the selected day.</Text>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button label="Next: Review" onPress={handleNext} />
+        <Button label="Next: Review" onPress={handleNext} disabled={!endDate} />
       </View>
     </ScreenContainer>
   );
@@ -111,9 +75,6 @@ const styles = StyleSheet.create({
   disableableGroup: {
     gap: spacing.xl,
   },
-  disabledGroup: {
-    opacity: 0.4,
-  },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -130,24 +91,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
     flex: 1,
   },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.lg,
-    marginTop: spacing.xl,
-    paddingTop: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  toggleTextColumn: {
-    gap: 2,
-  },
-  toggleTitle: {
-    ...typography.bodyMedium,
-    color: colors.textPrimary,
-  },
-  toggleSubtitle: {
+  hintText: {
     ...typography.caption,
     color: colors.textSecondary,
   },
